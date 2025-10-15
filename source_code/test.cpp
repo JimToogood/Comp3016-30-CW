@@ -2,15 +2,26 @@
 #include <SDL.h>
 using namespace std;
 
+// Define constants needed throughout code
 struct Constants {
-    static constexpr int WIN_WIDTH = 800;
-    static constexpr int WIN_HEIGHT = 600;
+    static constexpr int WIN_WIDTH = 1400;
+    static constexpr int WIN_HEIGHT = 800;
+    static constexpr int LEVEL_WIDTH = 2000;
+    static constexpr int FLOOR_LEVEL = 700;
     static constexpr float GRAVITY = 1800.0f;
-    static constexpr float TERMINAL_VELOCITY = 1080.0f;
+    static constexpr float TERMINAL_VELOCITY = 1200.0f;
+    static constexpr float CAMERA_DELAY = 15.0f;
 };
 
 struct Vector2 {
     float x, y;
+};
+
+struct Camera {
+    float targetY;
+    float y;
+    int x;
+    int w, h;
 };
 
 // Axis-aligned bounding box collision
@@ -33,23 +44,37 @@ class Player {
             isJumping(false),
             isGrounded(false),
             speed(300.0f),
-            jumpVelocity(-660.0f)
+            jumpVelocity(-960.0f)
         {}
 
-        void HandleInput(const Uint8* keystate) {
+        void HandleInput(const Uint8* keystate, SDL_GameController* controller) {
+            bool jumpPressed = keystate[SDL_SCANCODE_SPACE];
+
+            float leftStickAxis = 0.0f;
+            if (controller) {
+                leftStickAxis = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
+                // Leave 20% deadzone on stick input
+                if (fabs(leftStickAxis) < 0.2f) {
+                    leftStickAxis = 0.0f;
+                }
+                if (!jumpPressed) {
+                    jumpPressed = SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A);
+                }
+            }
+
             // Reset horizontal velocity
             vel.x = 0;
 
             // Move Left
-            if (keystate[SDL_SCANCODE_A]) {
+            if (keystate[SDL_SCANCODE_A] || leftStickAxis < 0.0f) {
                 vel.x = -speed;
             }
             // Move Right
-            if (keystate[SDL_SCANCODE_D]) {
+            if (keystate[SDL_SCANCODE_D] || leftStickAxis > 0.0f) {
                 vel.x = speed;
             }
             // Jump
-            if (keystate[SDL_SCANCODE_SPACE]) {
+            if (jumpPressed) {
                 if (isGrounded && !isJumping) {
                     vel.y = jumpVelocity;
                     isJumping = true;
@@ -59,9 +84,14 @@ class Player {
             }
         }
 
-        void Update(vector<SDL_Rect> platforms, float deltaTime) {
+        void Update(vector<SDL_Rect> platforms, Camera& camera, float deltaTime) {
             // Apply gravity
             vel.y += Constants::GRAVITY * deltaTime;
+
+            // Shorten jump if player stopped pressed jump early by increasing gravity
+            if (!isJumping && vel.y < 0) {
+                vel.y += Constants::GRAVITY * deltaTime * 3.0f;
+            }
 
             if (vel.y > Constants::TERMINAL_VELOCITY) {
                 vel.y = Constants::TERMINAL_VELOCITY;
@@ -69,6 +99,16 @@ class Player {
             
             // Apply horizontal velocity
             pos.x += vel.x * deltaTime;
+
+            // Stop playing from going off screen
+            if (pos.x < 0) {
+                pos.x = 0;
+                vel.x = 0;
+            } else if (pos.x + body.w > Constants::LEVEL_WIDTH) {
+                pos.x = Constants::LEVEL_WIDTH - body.w;
+                vel.x = 0;
+            }
+
             body.x = (int)pos.x;
             
             for (auto& platform : platforms) {
@@ -116,11 +156,18 @@ class Player {
                     vel.y = 0;
                 }
             }
+
+            // Make camera follow player
+            camera.x = pos.x + body.w / 2 - camera.w / 2;
+            camera.targetY = pos.y + body.h / 2 - camera.h / 1.8;
         }
 
-        void Render(SDL_Renderer* renderer) {
+        void Render(SDL_Renderer* renderer, Camera camera) {
             SDL_SetRenderDrawColor(renderer, 62, 146, 204, 255);
-            SDL_RenderFillRect(renderer, &body);
+
+            // Draw player relative to camera position
+            SDL_Rect drawPlayer = {body.x - camera.x, (int)(body.y - camera.y), body.w, body.h};
+            SDL_RenderFillRect(renderer, &drawPlayer);
         }
     
     private:
@@ -138,21 +185,27 @@ class Game {
         Game():
             window(nullptr),
             renderer(nullptr),
+            controller(nullptr),
             previousTick(0),
             isRunning(false),
             deltaTime(0),
-            player(385, 275, 30, 45),
+            camera({0.0f, 0, 0, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
+            player(1050, 250, 55, 100),
             platforms{
-                {0, 550, 800, 50},
-                {150, 450, 100, 20},
-                {350, 350, 100, 20},
-                {550, 250, 100, 20},
+                {0, Constants::FLOOR_LEVEL, Constants::LEVEL_WIDTH, 130},
+                {0, Constants::FLOOR_LEVEL - 150, 300, 150},
+                {550, Constants::FLOOR_LEVEL - 350, 125, 50},
+                {950, Constants::FLOOR_LEVEL - 275, 300, 275},
+                {1250, Constants::FLOOR_LEVEL - 140, 150, 140},
+                {1500, Constants::FLOOR_LEVEL - 475, 125, 50},
+                {1125, Constants::FLOOR_LEVEL - 625, 125, 50},
+                {700, Constants::FLOOR_LEVEL - 725, 125, 50},
             }
         {}
 
         void Initialise() {
             // Initialise SDL, output error if fails
-            if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+            if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
                 cerr << "SDL could not initialise. Error: " << SDL_GetError() << endl;
                 return;
             }
@@ -176,6 +229,15 @@ class Game {
                 return;
             }
 
+            // Find controller
+            for (int i = 0; i < SDL_NumJoysticks(); i++) {
+                if (SDL_IsGameController(i)) {
+                    controller = SDL_GameControllerOpen(i);
+                    cout << "Controller found: " << SDL_GameControllerName(controller) << endl;
+                    break;
+                }
+            }
+
             // If everything has been initialised without error, run game 
             isRunning = true;
         }
@@ -188,8 +250,9 @@ class Game {
                 }
             }
 
+            // Get keyboard inputs
             const Uint8* keystate = SDL_GetKeyboardState(nullptr);
-            player.HandleInput(keystate);
+            player.HandleInput(keystate, controller);
         }
 
         void Update() {
@@ -198,19 +261,41 @@ class Game {
             deltaTime = (currentTick - previousTick) / 1000.0f;
             previousTick = currentTick;
 
-            player.Update(platforms, deltaTime);
+            // Clamp deltaTime to avoid clipping at low FPS
+            if (deltaTime > 0.05f) {
+                deltaTime = 0.05f;
+            }
+
+            player.Update(platforms, camera, deltaTime);
+
+            // Clamp camera to avoid out of bounds
+            if (camera.x < 0) {
+                camera.x = 0;
+            } else if (camera.x > Constants::LEVEL_WIDTH - camera.w) {
+                camera.x = Constants::LEVEL_WIDTH - camera.w;
+            }
+
+            if (camera.targetY > 0.0f) {
+                camera.targetY = 0.0f;
+            }
+
+            // Make camera move smoothly vertically to avoid stuttering
+            camera.y += (camera.targetY - camera.y) * Constants::CAMERA_DELAY * deltaTime;
         }
 
         void Render() {
+            // Draw background
             SDL_SetRenderDrawColor(renderer, 29, 62, 94, 255);
             SDL_RenderClear(renderer);
 
             SDL_SetRenderDrawColor(renderer, 42, 98, 143, 255);
             for (auto& platform : platforms) {
-                SDL_RenderFillRect(renderer, &platform);
+                // Draw platforms relative to camera position
+                SDL_Rect drawPlatform = {platform.x - camera.x, (int)(platform.y - camera.y), platform.w, platform.h};
+                SDL_RenderFillRect(renderer, &drawPlatform);
             }
 
-            player.Render(renderer);
+            player.Render(renderer, camera);
 
             SDL_RenderPresent(renderer);
         }
@@ -232,10 +317,12 @@ class Game {
     private:
         SDL_Window* window;
         SDL_Renderer* renderer;
+        SDL_GameController* controller;
         
         Uint32 previousTick;
         bool isRunning;
         float deltaTime;
+        Camera camera;
         Player player;
         vector<SDL_Rect> platforms;
 };
