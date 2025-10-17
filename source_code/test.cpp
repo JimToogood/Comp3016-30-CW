@@ -6,7 +6,7 @@ using namespace std;
 struct Constants {
     static constexpr int WIN_WIDTH = 1400;
     static constexpr int WIN_HEIGHT = 800;
-    static constexpr int LEVEL_WIDTH = 2000;
+    static constexpr int LEVEL_WIDTH = 2250;
     static constexpr int FLOOR_LEVEL = 700;
     static constexpr float GRAVITY = 1800.0f;
     static constexpr float TERMINAL_VELOCITY = 1200.0f;
@@ -18,9 +18,8 @@ struct Vector2 {
 };
 
 struct Camera {
-    float targetY;
-    float y;
-    int x;
+    float targetX, targetY;
+    float x, y;
     int w, h;
 };
 
@@ -41,14 +40,21 @@ class Player {
             pos{(float)x, (float)y},
             vel{0, 0},
             body{x, y, width, height},
+            canDash{true},
+            isDashing{false},
+            dashPressedLastFrame{false},
+            dashTimer{0.0f},
+            dashCooldown{0.0f},
             isJumping(false),
             isGrounded(false),
+            facingLeft(true),
             speed(300.0f),
             jumpVelocity(-960.0f)
-        {}
+        {};
 
         void HandleInput(const Uint8* keystate, SDL_GameController* controller) {
             bool jumpPressed = keystate[SDL_SCANCODE_SPACE];
+            bool dashPressed = keystate[SDL_SCANCODE_LSHIFT];
 
             float leftStickAxis = 0.0f;
             if (controller) {
@@ -60,18 +66,31 @@ class Player {
                 if (!jumpPressed) {
                     jumpPressed = SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A);
                 }
+                if (!dashPressed) {
+                    dashPressed = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+                }
             }
 
-            // Reset horizontal velocity
-            vel.x = 0;
+            // Dash
+            if (dashPressed && !dashPressedLastFrame && canDash && dashCooldown <= 0.0f) {
+                isDashing = true;
+                canDash = false;
+                dashTimer = 0.3f;
+                dashCooldown = 0.75f;
+            } else {
+                // Reset horizontal velocity
+                vel.x = 0;
 
-            // Move Left
-            if (keystate[SDL_SCANCODE_A] || leftStickAxis < 0.0f) {
-                vel.x = -speed;
-            }
-            // Move Right
-            if (keystate[SDL_SCANCODE_D] || leftStickAxis > 0.0f) {
-                vel.x = speed;
+                // Move Left
+                if (keystate[SDL_SCANCODE_A] || leftStickAxis < 0.0f) {
+                    facingLeft = true;
+                    vel.x = -speed;
+                }
+                // Move Right
+                if (keystate[SDL_SCANCODE_D] || leftStickAxis > 0.0f) {
+                    facingLeft = false;
+                    vel.x = speed;
+                }
             }
             // Jump
             if (jumpPressed) {
@@ -82,9 +101,26 @@ class Player {
             } else {
                 isJumping = false;
             }
+
+            // Check if dash pressed last frame so player cant hold down dash button to keep dashing
+            dashPressedLastFrame = dashPressed;
         }
 
         void Update(vector<SDL_Rect> platforms, Camera& camera, float deltaTime) {
+            if (isDashing) {
+                // Apply dash velocity (multiply by dashTimer so dash starts fast then slows down)
+                if (facingLeft) {
+                    vel.x = -speed * 15 * dashTimer;
+                } else {
+                    vel.x = speed * 15 * dashTimer;
+                }
+                
+                dashTimer -= deltaTime;
+                if (dashTimer <= 0.0f) {
+                    isDashing = false;
+                }
+            }
+
             // Apply gravity
             vel.y += Constants::GRAVITY * deltaTime;
 
@@ -158,15 +194,25 @@ class Player {
             }
 
             // Make camera follow player
-            camera.x = pos.x + body.w / 2 - camera.w / 2;
+            camera.targetX = pos.x + body.w / 2 - camera.w / 2;
             camera.targetY = pos.y + body.h / 2 - camera.h / 1.8;
+
+            // Apply dash cooldown
+            if (dashCooldown > 0.0f) {
+                dashCooldown -= deltaTime;
+            }
+
+            // If player is grounded, allow them to dash again (can only dash once middair)
+            if (isGrounded && !canDash) {
+                canDash = true;
+            }
         }
 
         void Render(SDL_Renderer* renderer, Camera camera) {
             SDL_SetRenderDrawColor(renderer, 62, 146, 204, 255);
 
             // Draw player relative to camera position
-            SDL_Rect drawPlayer = {body.x - camera.x, (int)(body.y - camera.y), body.w, body.h};
+            SDL_Rect drawPlayer = {(int)roundf(body.x - camera.x), (int)(body.y - camera.y), body.w, body.h};
             SDL_RenderFillRect(renderer, &drawPlayer);
         }
     
@@ -174,8 +220,16 @@ class Player {
         Vector2 pos;
         Vector2 vel;
         SDL_Rect body;
+
+        bool canDash;
+        bool isDashing;
+        bool dashPressedLastFrame;
+        float dashTimer;
+        float dashCooldown;
+
         bool isJumping;
         bool isGrounded;
+        bool facingLeft;
         float speed;
         float jumpVelocity;
 };
@@ -189,19 +243,19 @@ class Game {
             previousTick(0),
             isRunning(false),
             deltaTime(0),
-            camera({0.0f, 0, 0, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
-            player(1050, 250, 55, 100),
+            camera({0.0f, 0.0f, 0.0f, 0.0f, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
+            player(100, 250, 55, 100),
             platforms{
                 {0, Constants::FLOOR_LEVEL, Constants::LEVEL_WIDTH, 130},
                 {0, Constants::FLOOR_LEVEL - 150, 300, 150},
                 {550, Constants::FLOOR_LEVEL - 350, 125, 50},
-                {950, Constants::FLOOR_LEVEL - 275, 300, 275},
-                {1250, Constants::FLOOR_LEVEL - 140, 150, 140},
-                {1500, Constants::FLOOR_LEVEL - 475, 125, 50},
-                {1125, Constants::FLOOR_LEVEL - 625, 125, 50},
-                {700, Constants::FLOOR_LEVEL - 725, 125, 50},
+                {1050, Constants::FLOOR_LEVEL - 275, 300, 275},
+                {1350, Constants::FLOOR_LEVEL - 140, 150, 140},
+                {1625, Constants::FLOOR_LEVEL - 475, 125, 50},
+                {1225, Constants::FLOOR_LEVEL - 625, 125, 50},
+                {750, Constants::FLOOR_LEVEL - 775, 125, 50},
             }
-        {}
+        {};
 
         void Initialise() {
             // Initialise SDL, output error if fails
@@ -269,18 +323,19 @@ class Game {
             player.Update(platforms, camera, deltaTime);
 
             // Clamp camera to avoid out of bounds
-            if (camera.x < 0) {
-                camera.x = 0;
-            } else if (camera.x > Constants::LEVEL_WIDTH - camera.w) {
-                camera.x = Constants::LEVEL_WIDTH - camera.w;
+            if (camera.targetX < 0) {
+                camera.targetX = 0;
+            } else if (camera.targetX > Constants::LEVEL_WIDTH - camera.w) {
+                camera.targetX = Constants::LEVEL_WIDTH - camera.w;
             }
 
             if (camera.targetY > 0.0f) {
                 camera.targetY = 0.0f;
             }
 
-            // Make camera move smoothly vertically to avoid stuttering
+            // Make camera move smoothly to avoid stuttering
             camera.y += (camera.targetY - camera.y) * Constants::CAMERA_DELAY * deltaTime;
+            camera.x += (camera.targetX - camera.x) * Constants::CAMERA_DELAY * deltaTime;
         }
 
         void Render() {
@@ -291,7 +346,7 @@ class Game {
             SDL_SetRenderDrawColor(renderer, 42, 98, 143, 255);
             for (auto& platform : platforms) {
                 // Draw platforms relative to camera position
-                SDL_Rect drawPlatform = {platform.x - camera.x, (int)(platform.y - camera.y), platform.w, platform.h};
+                SDL_Rect drawPlatform = {(int)(platform.x - camera.x), (int)(platform.y - camera.y), platform.w, platform.h};
                 SDL_RenderFillRect(renderer, &drawPlatform);
             }
 
