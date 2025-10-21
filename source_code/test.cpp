@@ -40,32 +40,39 @@ class Player {
             pos{(float)x, (float)y},
             vel{0, 0},
             body{x, y, width, height},
+            attackHitbox{x, y, width, width},
             canDash{true},
             isDashing{false},
             dashPressedLastFrame{false},
             dashTimer{0.0f},
             dashCooldown{0.0f},
+            //isAttacking{false},
+            attackPressedLastFrame{false},
+            isGrounded{false},
+            coyoteTimer{0.0f},
             isJumping(false),
-            isGrounded(false),
             facingLeft(true),
             speed(300.0f),
             jumpVelocity(-960.0f)
         {};
 
         void HandleInput(const Uint8* keystate, SDL_GameController* controller) {
-            bool jumpPressed = keystate[SDL_SCANCODE_SPACE];
             bool dashPressed = keystate[SDL_SCANCODE_LSHIFT];
 
-            float leftStickAxis = 0.0f;
+            float leftStickXAxis = 0.0f;
+            float leftStickYAxis = 0.0f;
             if (controller) {
-                leftStickAxis = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
+                leftStickXAxis = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
+                leftStickYAxis = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
+
                 // Leave 20% deadzone on stick input
-                if (fabs(leftStickAxis) < 0.2f) {
-                    leftStickAxis = 0.0f;
+                if (fabs(leftStickXAxis) < 0.2f) {
+                    leftStickXAxis = 0.0f;
                 }
-                if (!jumpPressed) {
-                    jumpPressed = SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A);
+                if (fabs(leftStickYAxis) < 0.2f) {
+                    leftStickYAxis = 0.0f;
                 }
+
                 if (!dashPressed) {
                     dashPressed = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
                 }
@@ -82,18 +89,37 @@ class Player {
                 vel.x = 0;
 
                 // Move Left
-                if (keystate[SDL_SCANCODE_A] || leftStickAxis < 0.0f) {
+                if (keystate[SDL_SCANCODE_A] || leftStickXAxis < 0.0f) {
                     facingLeft = true;
                     vel.x = -speed;
                 }
                 // Move Right
-                if (keystate[SDL_SCANCODE_D] || leftStickAxis > 0.0f) {
+                if (keystate[SDL_SCANCODE_D] || leftStickXAxis > 0.0f) {
                     facingLeft = false;
                     vel.x = speed;
                 }
             }
+
+            // Attack
+            if (keystate[SDL_SCANCODE_E] || SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X)) {
+                // If holding up, attack up
+                if (keystate[SDL_SCANCODE_W] || leftStickYAxis < 0.0f) {
+                    attackHitbox.x = pos.x;
+                    attackHitbox.y = pos.y - attackHitbox.h;
+                } else if ((keystate[SDL_SCANCODE_S] || leftStickYAxis > 0.0f) && !isGrounded) {
+                    attackHitbox.x = pos.x;
+                    attackHitbox.y = pos.y + body.h;
+                } else if (facingLeft) {
+                    attackHitbox.x = pos.x - attackHitbox.w;
+                    attackHitbox.y = pos.y + attackHitbox.h/2;
+                } else {
+                    attackHitbox.x = pos.x + attackHitbox.w;
+                    attackHitbox.y = pos.y + attackHitbox.h/2;
+                }
+            }
+
             // Jump
-            if (jumpPressed) {
+            if (keystate[SDL_SCANCODE_SPACE] || SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) {
                 if (isGrounded && !isJumping) {
                     vel.y = jumpVelocity;
                     isJumping = true;
@@ -171,6 +197,7 @@ class Player {
             pos.y += vel.y * deltaTime;
             body.y = (int)pos.y;
             isGrounded = false;
+            bool groundedThisFrame = false;
             
             for (auto& platform : platforms) {
                 // If player is colliding with platform
@@ -178,7 +205,7 @@ class Player {
                     // If moving down, allign players bottom edge with platforms top edge
                     if (vel.y > 0) {
                         body.y = platform.y - body.h;
-                        isGrounded = true;
+                        groundedThisFrame = true;
                     }
                     // If moving up, allign players top edge with platforms bottom edge
                     else if (vel.y < 0) {
@@ -190,6 +217,19 @@ class Player {
                     
                     // Reset vertical velocity
                     vel.y = 0;
+                }
+            }
+
+            // Allow player to still jump for a few frames after leaving the ground (makes movement feel smoother)
+            if (groundedThisFrame) {
+                isGrounded = true;
+                coyoteTimer = 0.05f; 
+            } else {
+                if (coyoteTimer > 0.0f) {
+                    coyoteTimer -= deltaTime;
+                    isGrounded = true;
+                } else {
+                    isGrounded = false;
                 }
             }
 
@@ -209,6 +249,13 @@ class Player {
         }
 
         void Render(SDL_Renderer* renderer, Camera camera) {
+            //if (!isAttacking) {
+                SDL_SetRenderDrawColor(renderer, 204, 62, 146, 255);
+                // Draw attack
+                SDL_Rect drawAttack = {(int)roundf(attackHitbox.x - camera.x), (int)(attackHitbox.y - camera.y), attackHitbox.w, attackHitbox.h};
+                SDL_RenderFillRect(renderer, &drawAttack);
+            //}
+
             SDL_SetRenderDrawColor(renderer, 62, 146, 204, 255);
 
             // Draw player relative to camera position
@@ -220,6 +267,7 @@ class Player {
         Vector2 pos;
         Vector2 vel;
         SDL_Rect body;
+        SDL_Rect attackHitbox;
 
         bool canDash;
         bool isDashing;
@@ -227,8 +275,13 @@ class Player {
         float dashTimer;
         float dashCooldown;
 
-        bool isJumping;
+        //bool isAttacking;
+        bool attackPressedLastFrame;
+
         bool isGrounded;
+        float coyoteTimer;
+
+        bool isJumping;
         bool facingLeft;
         float speed;
         float jumpVelocity;
@@ -246,7 +299,7 @@ class Game {
             camera({0.0f, 0.0f, 0.0f, 0.0f, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
             player(100, 250, 55, 100),
             platforms{
-                {0, Constants::FLOOR_LEVEL, Constants::LEVEL_WIDTH, 130},
+                {0, Constants::FLOOR_LEVEL, Constants::LEVEL_WIDTH, 130},   // Floor
                 {0, Constants::FLOOR_LEVEL - 150, 300, 150},
                 {550, Constants::FLOOR_LEVEL - 350, 125, 50},
                 {1050, Constants::FLOOR_LEVEL - 275, 300, 275},
