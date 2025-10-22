@@ -33,6 +33,9 @@ bool AABB(const SDL_Rect& a, const SDL_Rect& b) {
     );                          // THEN 'A' and 'B' are colliding (return true)
 }
 
+// Use enum class to store attack direction, as it is more efficient than a string
+enum class AttackDirection{NONE, UP, DOWN, LEFT, RIGHT};
+
 
 class Player {
     public:
@@ -46,18 +49,22 @@ class Player {
             dashPressedLastFrame{false},
             dashTimer{0.0f},
             dashCooldown{0.0f},
-            //isAttacking{false},
+            isAttacking{false},
             attackPressedLastFrame{false},
+            attackDirection{AttackDirection::NONE},
+            attackTimer{0.0f},
+            attackCooldown{0.0f},
             isGrounded{false},
             coyoteTimer{0.0f},
             isJumping(false),
-            facingLeft(true),
+            facingLeft(false),
             speed(300.0f),
             jumpVelocity(-960.0f)
         {};
 
         void HandleInput(const Uint8* keystate, SDL_GameController* controller) {
             bool dashPressed = keystate[SDL_SCANCODE_LSHIFT];
+            bool attackPressed = keystate[SDL_SCANCODE_E];
 
             float leftStickXAxis = 0.0f;
             float leftStickYAxis = 0.0f;
@@ -65,16 +72,19 @@ class Player {
                 leftStickXAxis = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
                 leftStickYAxis = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
 
-                // Leave 20% deadzone on stick input
+                // Leave slight deadzone on stick input
                 if (fabs(leftStickXAxis) < 0.2f) {
                     leftStickXAxis = 0.0f;
                 }
-                if (fabs(leftStickYAxis) < 0.2f) {
+                if (fabs(leftStickYAxis) < 0.5f) {
                     leftStickYAxis = 0.0f;
                 }
 
                 if (!dashPressed) {
                     dashPressed = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+                }
+                if (!attackPressed) {
+                    attackPressed = SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X);
                 }
             }
 
@@ -84,7 +94,10 @@ class Player {
                 canDash = false;
                 dashTimer = 0.3f;
                 dashCooldown = 0.75f;
-            } else {
+            }
+            
+            // Stop player from changing direction whilst dashing
+            if (!isDashing) {
                 // Reset horizontal velocity
                 vel.x = 0;
 
@@ -101,20 +114,19 @@ class Player {
             }
 
             // Attack
-            if (keystate[SDL_SCANCODE_E] || SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X)) {
-                // If holding up, attack up
+            if (attackPressed && !attackPressedLastFrame && !isAttacking && attackCooldown <= 0.0f) {
+                isAttacking = true;
+                attackTimer = 0.5f;
+                attackCooldown = 0.75f;
+
                 if (keystate[SDL_SCANCODE_W] || leftStickYAxis < 0.0f) {
-                    attackHitbox.x = pos.x;
-                    attackHitbox.y = pos.y - attackHitbox.h;
+                    attackDirection = AttackDirection::UP;
                 } else if ((keystate[SDL_SCANCODE_S] || leftStickYAxis > 0.0f) && !isGrounded) {
-                    attackHitbox.x = pos.x;
-                    attackHitbox.y = pos.y + body.h;
+                    attackDirection = AttackDirection::DOWN;
                 } else if (facingLeft) {
-                    attackHitbox.x = pos.x - attackHitbox.w;
-                    attackHitbox.y = pos.y + attackHitbox.h/2;
+                    attackDirection = AttackDirection::LEFT;
                 } else {
-                    attackHitbox.x = pos.x + attackHitbox.w;
-                    attackHitbox.y = pos.y + attackHitbox.h/2;
+                    attackDirection = AttackDirection::RIGHT;
                 }
             }
 
@@ -128,8 +140,9 @@ class Player {
                 isJumping = false;
             }
 
-            // Check if dash pressed last frame so player cant hold down dash button to keep dashing
+            // Check if button pressed last frame so player cant hold down button button to keep doing action
             dashPressedLastFrame = dashPressed;
+            attackPressedLastFrame = attackPressed;
         }
 
         void Update(vector<SDL_Rect> platforms, Camera& camera, float deltaTime) {
@@ -144,6 +157,13 @@ class Player {
                 dashTimer -= deltaTime;
                 if (dashTimer <= 0.0f) {
                     isDashing = false;
+                }
+            }
+
+            if (isAttacking) {
+                attackTimer -= deltaTime;
+                if (attackTimer <= 0.0f) {
+                    isAttacking = false;
                 }
             }
 
@@ -237,9 +257,36 @@ class Player {
             camera.targetX = pos.x + body.w / 2 - camera.w / 2;
             camera.targetY = pos.y + body.h / 2 - camera.h / 1.8;
 
-            // Apply dash cooldown
+            // Make attack hitbox follow player
+            if (isAttacking) {
+                switch (attackDirection) {
+                    case AttackDirection::UP:
+                        attackHitbox.x = pos.x;
+                        attackHitbox.y = pos.y - attackHitbox.h;
+                        break;
+                    case AttackDirection::DOWN:
+                        attackHitbox.x = pos.x;
+                        attackHitbox.y = pos.y + body.h;
+                        break;
+                    case AttackDirection::LEFT:
+                        attackHitbox.x = pos.x - attackHitbox.w;
+                        attackHitbox.y = pos.y + attackHitbox.h/2;
+                        break;
+                    case AttackDirection::RIGHT:
+                        attackHitbox.x = pos.x + attackHitbox.w;
+                        attackHitbox.y = pos.y + attackHitbox.h/2;
+                        break;
+                    default:
+                        break;
+                } 
+            }
+
+            // Apply cooldowns
             if (dashCooldown > 0.0f) {
                 dashCooldown -= deltaTime;
+            }
+            if (attackCooldown > 0.0f) {
+                attackCooldown -= deltaTime;
             }
 
             // If player is grounded, allow them to dash again (can only dash once middair)
@@ -249,15 +296,14 @@ class Player {
         }
 
         void Render(SDL_Renderer* renderer, Camera camera) {
-            //if (!isAttacking) {
+            if (isAttacking) {
                 SDL_SetRenderDrawColor(renderer, 204, 62, 146, 255);
-                // Draw attack
+                // Draw attack relative to camera position
                 SDL_Rect drawAttack = {(int)roundf(attackHitbox.x - camera.x), (int)(attackHitbox.y - camera.y), attackHitbox.w, attackHitbox.h};
                 SDL_RenderFillRect(renderer, &drawAttack);
-            //}
+            }
 
             SDL_SetRenderDrawColor(renderer, 62, 146, 204, 255);
-
             // Draw player relative to camera position
             SDL_Rect drawPlayer = {(int)roundf(body.x - camera.x), (int)(body.y - camera.y), body.w, body.h};
             SDL_RenderFillRect(renderer, &drawPlayer);
@@ -275,8 +321,11 @@ class Player {
         float dashTimer;
         float dashCooldown;
 
-        //bool isAttacking;
+        bool isAttacking;
         bool attackPressedLastFrame;
+        AttackDirection attackDirection;
+        float attackTimer;
+        float attackCooldown;
 
         bool isGrounded;
         float coyoteTimer;
