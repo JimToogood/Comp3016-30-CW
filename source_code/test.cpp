@@ -17,6 +17,10 @@ struct Vector2 {
     float x, y;
 };
 
+struct Colour {
+    Uint8 r, g, b, a;
+};
+
 struct Camera {
     float targetX, targetY;
     float x, y;
@@ -34,7 +38,7 @@ bool AABB(const SDL_Rect& a, const SDL_Rect& b) {
 }
 
 // Use enum class to store attack direction, as it is more efficient than a string
-enum class AttackDirection{NONE, UP, DOWN, LEFT, RIGHT};
+enum class AttackDirection{UP, DOWN, LEFT, RIGHT};
 
 
 class Player {
@@ -51,7 +55,7 @@ class Player {
             dashCooldown{0.0f},
             isAttacking{false},
             attackPressedLastFrame{false},
-            attackDirection{AttackDirection::NONE},
+            attackDirection{AttackDirection::RIGHT},
             attackTimer{0.0f},
             attackCooldown{0.0f},
             isGrounded{false},
@@ -96,7 +100,7 @@ class Player {
                 dashCooldown = 0.75f;
             }
             
-            // Stop player from changing direction whilst dashing
+            // Stop player from jumping or changing direction whilst dashing
             if (!isDashing) {
                 // Reset horizontal velocity
                 vel.x = 0;
@@ -110,6 +114,16 @@ class Player {
                 if (keystate[SDL_SCANCODE_D] || leftStickXAxis > 0.0f) {
                     facingLeft = false;
                     vel.x = speed;
+                }
+
+                // Jump
+                if (keystate[SDL_SCANCODE_SPACE] || SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) {
+                    if (isGrounded && !isJumping) {
+                        vel.y = jumpVelocity;
+                        isJumping = true;
+                    }
+                } else {
+                    isJumping = false;
                 }
             }
 
@@ -128,16 +142,6 @@ class Player {
                 } else {
                     attackDirection = AttackDirection::RIGHT;
                 }
-            }
-
-            // Jump
-            if (keystate[SDL_SCANCODE_SPACE] || SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) {
-                if (isGrounded && !isJumping) {
-                    vel.y = jumpVelocity;
-                    isJumping = true;
-                }
-            } else {
-                isJumping = false;
             }
 
             // Check if button pressed last frame so player cant hold down button button to keep doing action
@@ -276,8 +280,6 @@ class Player {
                         attackHitbox.x = pos.x + attackHitbox.w;
                         attackHitbox.y = pos.y + attackHitbox.h/2;
                         break;
-                    default:
-                        break;
                 } 
             }
 
@@ -308,6 +310,10 @@ class Player {
             SDL_Rect drawPlayer = {(int)roundf(body.x - camera.x), (int)(body.y - camera.y), body.w, body.h};
             SDL_RenderFillRect(renderer, &drawPlayer);
         }
+
+        Vector2 GetPosition() {
+            return pos;
+        }
     
     private:
         Vector2 pos;
@@ -336,6 +342,120 @@ class Player {
         float jumpVelocity;
 };
 
+// Enemy Class
+class Enemy {
+    public:
+        Enemy(int x, int y, int width, int height, int health, Uint8 r, Uint8 g, Uint8 b):
+            pos{(float)x, (float)y},
+            vel{0, 0},
+            body{x, y, width, height},
+            colour{r, g, b, 255},
+            health(health),
+            onScreen(false)
+        {};
+
+        void TakeDamage(int damage) {
+            health -= damage;
+
+            if (health <= 0) {
+                cout << "enemy die" << endl;
+            }
+        }
+
+        void Update(vector<SDL_Rect> platforms, float deltaTime, Vector2 playerPos) {
+            if (onScreen) {
+                if (playerPos.x < pos.x - body.w) {
+                    vel.x = -150.0f;
+                } else if (playerPos.x > pos.x + body.w) {
+                    vel.x = 150.0f;
+                } else {
+                    vel.x = 0.0f;
+                }
+
+                // Apply gravity
+                vel.y += Constants::GRAVITY * deltaTime;
+
+                if (vel.y > Constants::TERMINAL_VELOCITY) {
+                    vel.y = Constants::TERMINAL_VELOCITY;
+                }
+                
+                // Apply horizontal velocity
+                pos.x += vel.x * deltaTime;
+                body.x = (int)pos.x;
+                
+                for (auto& platform : platforms) {
+                    // If enemy is colliding with platform
+                    if (AABB(body, platform)) {
+                        // If moving left, allign enemys right edge with platforms left edge
+                        if (vel.x > 0) {
+                            body.x = platform.x - body.w;
+                        }
+                        // If moving right, allign enemys left edge with platforms right edge
+                        else if (vel.x < 0) {
+                            body.x = platform.x + platform.w;
+                        }
+
+                        // Sync pos with body after collision
+                        pos.x = body.x;
+                        
+                        // Reset horizontal velocity
+                        vel.x = 0;
+                    }
+                }
+
+                // Apply vertical velocity
+                pos.y += vel.y * deltaTime;
+                body.y = (int)pos.y;
+                
+                for (auto& platform : platforms) {
+                    // If enemy is colliding with platform
+                    if (AABB(body, platform)) {
+                        // If moving down, allign enemys bottom edge with platforms top edge
+                        if (vel.y > 0) {
+                            body.y = platform.y - body.h;
+                        }
+                        // If moving up, allign enemys top edge with platforms bottom edge
+                        else if (vel.y < 0) {
+                            body.y = platform.y + platform.h;
+                        }
+
+                        // Sync pos with body after collision
+                        pos.y = body.y;
+                        
+                        // Reset vertical velocity
+                        vel.y = 0;
+                    }
+                }
+            }
+        };
+
+        void Render(SDL_Renderer* renderer, Camera camera) {
+            if (onScreen) {
+                SDL_SetRenderDrawColor(renderer, colour.r, colour.g, colour.b, colour.a);
+                // Draw enemy relative to camera position
+                SDL_Rect drawEnemy = {(int)roundf(body.x - camera.x), (int)(body.y - camera.y), body.w, body.h};
+                SDL_RenderFillRect(renderer, &drawEnemy);
+            }
+        };
+
+        void CheckOnScreen(SDL_Rect cameraRect) {
+            if (AABB(body, cameraRect)) {
+                onScreen = true;
+            } else {
+                onScreen = false;
+            }
+        }
+    
+    private:
+        Vector2 pos;
+        Vector2 vel;
+        SDL_Rect body;
+
+        Colour colour;
+        int health;
+        bool onScreen;
+};
+
 class Game {
     public:
         Game():
@@ -346,7 +466,9 @@ class Game {
             isRunning(false),
             deltaTime(0),
             camera({0.0f, 0.0f, 0.0f, 0.0f, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
+            cameraRect({0, 0, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
             player(100, 250, 55, 100),
+            exampleEnemy(1150, 125, 55, 100, 50, 205, 50, 50),
             platforms{
                 {0, Constants::FLOOR_LEVEL, Constants::LEVEL_WIDTH, 130},   // Floor
                 {0, Constants::FLOOR_LEVEL - 150, 300, 150},
@@ -356,6 +478,8 @@ class Game {
                 {1625, Constants::FLOOR_LEVEL - 475, 125, 50},
                 {1225, Constants::FLOOR_LEVEL - 625, 125, 50},
                 {750, Constants::FLOOR_LEVEL - 775, 125, 50},
+                {0, Constants::FLOOR_LEVEL - 1005, 700, 50},
+                {925, Constants::FLOOR_LEVEL - 1005, Constants::LEVEL_WIDTH - 925, 50},
             }
         {};
 
@@ -424,6 +548,12 @@ class Game {
 
             player.Update(platforms, camera, deltaTime);
 
+            cameraRect.x = (int)(camera.x);
+            cameraRect.y = (int)(camera.y);
+            
+            exampleEnemy.CheckOnScreen(cameraRect);
+            exampleEnemy.Update(platforms, deltaTime, player.GetPosition());
+
             // Clamp camera to avoid out of bounds
             if (camera.targetX < 0) {
                 camera.targetX = 0;
@@ -452,6 +582,7 @@ class Game {
                 SDL_RenderFillRect(renderer, &drawPlatform);
             }
 
+            exampleEnemy.Render(renderer, camera);
             player.Render(renderer, camera);
 
             SDL_RenderPresent(renderer);
@@ -480,7 +611,9 @@ class Game {
         bool isRunning;
         float deltaTime;
         Camera camera;
+        SDL_Rect cameraRect;
         Player player;
+        Enemy exampleEnemy;
         vector<SDL_Rect> platforms;
 };
 
