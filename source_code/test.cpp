@@ -2,6 +2,11 @@
 #include <SDL.h>
 using namespace std;
 
+// Forward declarations
+class Player;
+class Enemy;
+class Game;
+
 // Define constants needed throughout code
 struct Constants {
     static constexpr int WIN_WIDTH = 1400;
@@ -11,6 +16,8 @@ struct Constants {
     static constexpr float GRAVITY = 1800.0f;
     static constexpr float TERMINAL_VELOCITY = 1200.0f;
     static constexpr float CAMERA_DELAY = 15.0f;
+    static constexpr float HORIZONTAL_KNOCKBACK = 600.0f;
+    static constexpr float VERTICAL_KNOCKBACK = -200.0f;
 };
 
 struct Vector2 {
@@ -37,10 +44,26 @@ bool AABB(const SDL_Rect& a, const SDL_Rect& b) {
     );                          // THEN 'A' and 'B' are colliding (return true)
 }
 
+void calcKnockback(Vector2 pos, Vector2& vel, Vector2 damageLocation) {
+    Vector2 direction = {pos.x - damageLocation.x, pos.y - damageLocation.y};
+    float length = sqrtf(direction.x * direction.x + direction.y * direction.y);
+
+    if (length > 0.0f) {
+        direction.x /= length;
+        direction.y /= length;
+        vel.x = direction.x * Constants::HORIZONTAL_KNOCKBACK;
+        vel.y = direction.y * Constants::HORIZONTAL_KNOCKBACK;
+        if (fabs(vel.y) < 10) {
+            vel.y = Constants::VERTICAL_KNOCKBACK;
+        }
+    }
+}
+
 // Use enum class to store attack direction, as it is more efficient than a string
 enum class AttackDirection{UP, DOWN, LEFT, RIGHT};
 
 
+// Player class
 class Player {
     public:
         Player(int x, int y, int width, int height):
@@ -60,6 +83,8 @@ class Player {
             attackCooldown{0.0f},
             isGrounded{false},
             coyoteTimer{0.0f},
+            damageCooldown{0.0f},
+            knockbackTimer{0.0f},
             isJumping(false),
             facingLeft(false),
             speed(300.0f),
@@ -101,7 +126,7 @@ class Player {
             }
             
             // Stop player from jumping or changing direction whilst dashing
-            if (!isDashing) {
+            if (!isDashing && knockbackTimer <= 0.0f) {
                 // Reset horizontal velocity
                 vel.x = 0;
 
@@ -150,37 +175,41 @@ class Player {
         }
 
         void Update(vector<SDL_Rect> platforms, Camera& camera, float deltaTime) {
-            if (isDashing) {
-                // Apply dash velocity (multiply by dashTimer so dash starts fast then slows down)
-                if (facingLeft) {
-                    vel.x = -speed * 15 * dashTimer;
-                } else {
-                    vel.x = speed * 15 * dashTimer;
+            if (knockbackTimer <= 0.0f) {
+                if (isDashing) {
+                    // Apply dash velocity (multiply by dashTimer so dash starts fast then slows down)
+                    if (facingLeft) {
+                        vel.x = -speed * 15 * dashTimer;
+                    } else {
+                        vel.x = speed * 15 * dashTimer;
+                    }
+                    
+                    dashTimer -= deltaTime;
+                    if (dashTimer <= 0.0f) {
+                        isDashing = false;
+                    }
                 }
-                
-                dashTimer -= deltaTime;
-                if (dashTimer <= 0.0f) {
-                    isDashing = false;
+
+                if (isAttacking) {
+                    attackTimer -= deltaTime;
+                    if (attackTimer <= 0.0f) {
+                        isAttacking = false;
+                    }
                 }
-            }
 
-            if (isAttacking) {
-                attackTimer -= deltaTime;
-                if (attackTimer <= 0.0f) {
-                    isAttacking = false;
+                // Apply gravity
+                vel.y += Constants::GRAVITY * deltaTime;
+
+                // Shorten jump if player stopped pressed jump early by increasing gravity
+                if (!isJumping && vel.y < 0) {
+                    vel.y += Constants::GRAVITY * deltaTime * 3.0f;
                 }
-            }
 
-            // Apply gravity
-            vel.y += Constants::GRAVITY * deltaTime;
-
-            // Shorten jump if player stopped pressed jump early by increasing gravity
-            if (!isJumping && vel.y < 0) {
-                vel.y += Constants::GRAVITY * deltaTime * 3.0f;
-            }
-
-            if (vel.y > Constants::TERMINAL_VELOCITY) {
-                vel.y = Constants::TERMINAL_VELOCITY;
+                if (vel.y > Constants::TERMINAL_VELOCITY) {
+                    vel.y = Constants::TERMINAL_VELOCITY;
+                }
+            } else {
+                knockbackTimer -= deltaTime;
             }
             
             // Apply horizontal velocity
@@ -284,12 +313,9 @@ class Player {
             }
 
             // Apply cooldowns
-            if (dashCooldown > 0.0f) {
-                dashCooldown -= deltaTime;
-            }
-            if (attackCooldown > 0.0f) {
-                attackCooldown -= deltaTime;
-            }
+            if (dashCooldown > 0.0f) { dashCooldown -= deltaTime; }
+            if (attackCooldown > 0.0f) { attackCooldown -= deltaTime; }
+            if (damageCooldown > 0.0f) { damageCooldown -= deltaTime; }
 
             // If player is grounded, allow them to dash again (can only dash once middair)
             if (isGrounded && !canDash) {
@@ -311,10 +337,24 @@ class Player {
             SDL_RenderFillRect(renderer, &drawPlayer);
         }
 
-        Vector2 GetPosition() {
-            return pos;
+        void DealDamage(vector<Enemy>& enemies);
+
+        void TakeDamage(int damage, Vector2 damageLocation) {
+            if (damageCooldown <= 0.0f) {
+                knockbackTimer = 0.1f;
+                damageCooldown = 0.75f;
+                
+                // Apply knockback
+                calcKnockback(pos, vel, damageLocation);
+                
+                // TODO: Take damage and die
+            }
         }
-    
+
+        // Getters
+        Vector2 getPos() { return pos; }
+        SDL_Rect getBody() { return body; }
+
     private:
         Vector2 pos;
         Vector2 vel;
@@ -336,47 +376,50 @@ class Player {
         bool isGrounded;
         float coyoteTimer;
 
+        float damageCooldown;
+        float knockbackTimer;
+
         bool isJumping;
         bool facingLeft;
         float speed;
         float jumpVelocity;
 };
 
-// Enemy Class
+
+// Enemy class
 class Enemy {
     public:
         Enemy(int x, int y, int width, int height, int health, Uint8 r, Uint8 g, Uint8 b):
             pos{(float)x, (float)y},
             vel{0, 0},
             body{x, y, width, height},
+            damageCooldown(0.0f),
+            knockbackTimer(0.0f),
             colour{r, g, b, 255},
             health(health),
             onScreen(false)
         {};
 
-        void TakeDamage(int damage) {
-            health -= damage;
-
-            if (health <= 0) {
-                cout << "enemy die" << endl;
-            }
-        }
-
         void Update(vector<SDL_Rect> platforms, float deltaTime, Vector2 playerPos) {
             if (onScreen) {
-                if (playerPos.x < pos.x - body.w) {
-                    vel.x = -150.0f;
-                } else if (playerPos.x > pos.x + body.w) {
-                    vel.x = 150.0f;
+                // If not currently taking knockback
+                if (knockbackTimer <= 0.0f) {
+                    if (playerPos.x < pos.x - body.w + 1) {
+                        vel.x = -150.0f;
+                    } else if (playerPos.x > pos.x + body.w - 1) {
+                        vel.x = 150.0f;
+                    } else {
+                        vel.x = 0;
+                    }
+
+                    // Apply gravity
+                    vel.y += Constants::GRAVITY * deltaTime;
+
+                    if (vel.y > Constants::TERMINAL_VELOCITY) {
+                        vel.y = Constants::TERMINAL_VELOCITY;
+                    }
                 } else {
-                    vel.x = 0.0f;
-                }
-
-                // Apply gravity
-                vel.y += Constants::GRAVITY * deltaTime;
-
-                if (vel.y > Constants::TERMINAL_VELOCITY) {
-                    vel.y = Constants::TERMINAL_VELOCITY;
+                    knockbackTimer -= deltaTime;
                 }
                 
                 // Apply horizontal velocity
@@ -427,7 +470,10 @@ class Enemy {
                     }
                 }
             }
-        };
+
+            // Apply cooldowns
+            if (damageCooldown > 0.0f) { damageCooldown -= deltaTime; }
+        }
 
         void Render(SDL_Renderer* renderer, Camera camera) {
             if (onScreen) {
@@ -436,7 +482,25 @@ class Enemy {
                 SDL_Rect drawEnemy = {(int)roundf(body.x - camera.x), (int)(body.y - camera.y), body.w, body.h};
                 SDL_RenderFillRect(renderer, &drawEnemy);
             }
-        };
+        }
+
+        void DealDamage(Player& player);
+
+        bool TakeDamage(int damage, Vector2 damageLocation) {
+            if (damageCooldown <= 0.0f) {
+                knockbackTimer = 0.1f;
+                damageCooldown = 0.75f;
+
+                // Apply knockback
+                calcKnockback(pos, vel, damageLocation);
+
+                // TODO: Take damage and die
+
+                return true;
+            } else {
+                return false;
+            }
+        }
 
         void CheckOnScreen(SDL_Rect cameraRect) {
             if (AABB(body, cameraRect)) {
@@ -445,17 +509,60 @@ class Enemy {
                 onScreen = false;
             }
         }
-    
+
+        // Getters
+        bool getOnScreen() { return onScreen; }
+        SDL_Rect getBody() { return body; }
+
     private:
         Vector2 pos;
         Vector2 vel;
         SDL_Rect body;
+
+        float damageCooldown;
+        float knockbackTimer;
 
         Colour colour;
         int health;
         bool onScreen;
 };
 
+
+// Class iteration logic (has to be defined after to avoid forward-declare errors)
+void Player::DealDamage(vector<Enemy>& enemies) {
+    // Only check if player is attacking
+    if (!isAttacking) { return; }
+
+    for (auto& enemy : enemies) {
+        // Only check enemies that are visible
+        if (!enemy.getOnScreen()) { return; }
+
+        if (AABB(enemy.getBody(), attackHitbox)) {
+            bool tookDamage = enemy.TakeDamage(0, pos);
+            if (tookDamage && !isJumping) {
+                switch (attackDirection) {
+                    case AttackDirection::DOWN:
+                        // Player bounce on enemy when hit
+                        vel.y = jumpVelocity * 1.5;
+                        attackCooldown = 0.0f;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+}
+
+void Enemy::DealDamage(Player& player) {
+    if (onScreen) {
+        if (AABB(player.getBody(), body)) {
+            player.TakeDamage(0, pos);
+        }
+    }
+}
+
+
+// Main game logic class
 class Game {
     public:
         Game():
@@ -468,7 +575,9 @@ class Game {
             camera({0.0f, 0.0f, 0.0f, 0.0f, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
             cameraRect({0, 0, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
             player(100, 250, 55, 100),
-            exampleEnemy(1150, 125, 55, 100, 50, 205, 50, 50),
+            enemies{
+                {1150, 125, 55, 100, 50, 205, 50, 50}
+            },
             platforms{
                 {0, Constants::FLOOR_LEVEL, Constants::LEVEL_WIDTH, 130},   // Floor
                 {0, Constants::FLOOR_LEVEL - 150, 300, 150},
@@ -479,7 +588,7 @@ class Game {
                 {1225, Constants::FLOOR_LEVEL - 625, 125, 50},
                 {750, Constants::FLOOR_LEVEL - 775, 125, 50},
                 {0, Constants::FLOOR_LEVEL - 1005, 700, 50},
-                {925, Constants::FLOOR_LEVEL - 1005, Constants::LEVEL_WIDTH - 925, 50},
+                {925, Constants::FLOOR_LEVEL - 1005, Constants::LEVEL_WIDTH - 925, 50}
             }
         {};
 
@@ -545,14 +654,18 @@ class Game {
             if (deltaTime > 0.05f) {
                 deltaTime = 0.05f;
             }
+            
+            for (auto& enemy : enemies) {
+                enemy.CheckOnScreen(cameraRect);
+                enemy.Update(platforms, deltaTime, player.getPos());
+                enemy.DealDamage(player);
+            }
 
             player.Update(platforms, camera, deltaTime);
+            player.DealDamage(enemies);
 
             cameraRect.x = (int)(camera.x);
             cameraRect.y = (int)(camera.y);
-            
-            exampleEnemy.CheckOnScreen(cameraRect);
-            exampleEnemy.Update(platforms, deltaTime, player.GetPosition());
 
             // Clamp camera to avoid out of bounds
             if (camera.targetX < 0) {
@@ -581,8 +694,11 @@ class Game {
                 SDL_Rect drawPlatform = {(int)(platform.x - camera.x), (int)(platform.y - camera.y), platform.w, platform.h};
                 SDL_RenderFillRect(renderer, &drawPlatform);
             }
+            
+            for (auto& enemy : enemies) {
+                enemy.Render(renderer, camera);
+            }
 
-            exampleEnemy.Render(renderer, camera);
             player.Render(renderer, camera);
 
             SDL_RenderPresent(renderer);
@@ -613,10 +729,13 @@ class Game {
         Camera camera;
         SDL_Rect cameraRect;
         Player player;
-        Enemy exampleEnemy;
+
+        vector<Enemy> enemies;
         vector<SDL_Rect> platforms;
 };
 
+
+// Run game
 int main(int argc, char* argv[]) {
     Game game;
     game.Initialise();
