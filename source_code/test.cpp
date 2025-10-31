@@ -1,5 +1,8 @@
+#include <fstream>
 #include <iostream>
 #include <SDL.h>
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
 using namespace std;
 
 // Forward declarations
@@ -11,7 +14,7 @@ class Game;
 struct Constants {
     static constexpr int WIN_WIDTH = 1400;
     static constexpr int WIN_HEIGHT = 800;
-    static constexpr int LEVEL_WIDTH = 2250;
+    static constexpr int LEVEL_WIDTH = 3250;
     static constexpr int FLOOR_LEVEL = 700;
     static constexpr float GRAVITY = 1800.0f;
     static constexpr float TERMINAL_VELOCITY = 1200.0f;
@@ -22,10 +25,6 @@ struct Constants {
 
 struct Vector2 {
     float x, y;
-};
-
-struct Colour {
-    Uint8 r, g, b, a;
 };
 
 struct Camera {
@@ -44,6 +43,7 @@ bool AABB(const SDL_Rect& a, const SDL_Rect& b) {
     );                          // THEN 'A' and 'B' are colliding (return true)
 }
 
+// Calculate knockback direction
 void calcKnockback(Vector2 pos, Vector2& vel, Vector2 damageLocation) {
     Vector2 direction = {pos.x - damageLocation.x, pos.y - damageLocation.y};
     float length = sqrtf(direction.x * direction.x + direction.y * direction.y);
@@ -53,10 +53,76 @@ void calcKnockback(Vector2 pos, Vector2& vel, Vector2 damageLocation) {
         direction.y /= length;
         vel.x = direction.x * Constants::HORIZONTAL_KNOCKBACK;
         vel.y = direction.y * Constants::HORIZONTAL_KNOCKBACK;
+
         if (fabs(vel.y) < 10) {
             vel.y = Constants::VERTICAL_KNOCKBACK;
         }
     }
+}
+
+// Load platforms from json file
+vector<SDL_Rect> loadPlatforms(const string& fileName) {
+    ifstream file(fileName);
+    if (!file.is_open()) {
+        cerr << "File '" << fileName << "' could not be opened. Closing program..." << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    json data;
+    file >> data;
+
+    vector<SDL_Rect> platforms;
+    platforms.reserve(data.size());
+
+    for (auto& entry : data) {
+        int x = entry["x"].get<int>();
+        int y = Constants::FLOOR_LEVEL - entry["y"].get<int>();
+        int h = entry["h"].get<int>();
+
+        int w = 0;
+        // If width is a string, then is will be "LEVEL_WIDTH"
+        if (entry["w"].is_string()) {
+            w = Constants::LEVEL_WIDTH;
+        // If width is not a string, then is will be an int
+        } else {
+            w = entry["w"].get<int>();
+        }
+
+        platforms.push_back(SDL_Rect{x, y, w, h});
+    }
+
+    return platforms;
+}
+
+// Load player location from json file
+Vector2 loadPlayerFile(const string& fileName) {
+    ifstream file(fileName);
+    if (!file.is_open()) {
+        cerr << "File '" << fileName << "' could not be opened." << endl;
+        return Vector2{100.0f, 250.0f};
+    }
+
+    json data;
+    file >> data;
+
+    float x = data[0]["x"].get<float>();
+    float y = data[0]["y"].get<float>();
+
+    return Vector2{x, y};
+}
+
+// Save player location to json file
+void savePlayerFile(const string& fileName, Vector2 pos) {
+    json data = json::array();
+    data.push_back({{"x", (int)pos.x}, {"y", (int)pos.y}});
+
+    ofstream file(fileName);
+    if (!file.is_open()) {
+        cerr << "Player data failed to save." << endl;
+        return;
+    }
+
+    file << data.dump(4);
 }
 
 // Use enum class to store attack direction, as it is more efficient than a string
@@ -66,11 +132,11 @@ enum class AttackDirection{UP, DOWN, LEFT, RIGHT};
 // Player class
 class Player {
     public:
-        Player(int x, int y, int width, int height):
-            pos{(float)x, (float)y},
+        Player(int width, int height, int health):
+            pos{0.0f, 0.0f},
             vel{0, 0},
-            body{x, y, width, height},
-            attackHitbox{x, y, width, width},
+            body{0, 0, width, height},
+            attackHitbox{0, 0, width, width},
             canDash{true},
             isDashing{false},
             dashPressedLastFrame{false},
@@ -88,7 +154,8 @@ class Player {
             isJumping(false),
             facingLeft(false),
             speed(300.0f),
-            jumpVelocity(-960.0f)
+            jumpVelocity(-960.0f),
+            health(health)
         {};
 
         void HandleInput(const Uint8* keystate, SDL_GameController* controller) {
@@ -167,6 +234,11 @@ class Player {
                 } else {
                     attackDirection = AttackDirection::RIGHT;
                 }
+            }
+
+            // DEBUG input to fly
+            if (keystate[SDL_SCANCODE_Q]) {
+                vel.y = jumpVelocity;
             }
 
             // Check if button pressed last frame so player cant hold down button button to keep doing action
@@ -331,29 +403,59 @@ class Player {
                 SDL_RenderFillRect(renderer, &drawAttack);
             }
 
-            SDL_SetRenderDrawColor(renderer, 62, 146, 204, 255);
+            if (damageCooldown > 0.25f) {
+                SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 62, 146, 204, 255);
+            }
+
             // Draw player relative to camera position
             SDL_Rect drawPlayer = {(int)roundf(body.x - camera.x), (int)(body.y - camera.y), body.w, body.h};
             SDL_RenderFillRect(renderer, &drawPlayer);
+            
+            // Health icons
+            SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+            for (int i = 0; i < health; i++) {
+                SDL_Rect icon = {10 + (60 * i), 10, 40, 40};
+                SDL_RenderFillRect(renderer, &icon);
+            }
+            // Damaged health icons
+            SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
+            for (int i = 0; i < 10 - health; i++) {
+                SDL_Rect icon = {550 - (60 * i), 10, 40, 40};
+                SDL_RenderFillRect(renderer, &icon);
+            }
         }
 
-        void DealDamage(vector<Enemy>& enemies);
+        void DealDamage(vector<unique_ptr<Enemy>>& enemies);
 
         void TakeDamage(int damage, Vector2 damageLocation) {
             if (damageCooldown <= 0.0f) {
                 knockbackTimer = 0.1f;
                 damageCooldown = 0.75f;
+                dashTimer = 0.0f;
                 
                 // Apply knockback
                 calcKnockback(pos, vel, damageLocation);
                 
-                // TODO: Take damage and die
+                // Apply damage
+                health -= damage;
+                if (health <= 0) {
+                    cout << "player die" << endl;
+                }
             }
         }
 
-        // Getters
+        // Getters and Setters
         Vector2 getPos() { return pos; }
         SDL_Rect getBody() { return body; }
+        void setLocation() {
+            Vector2 coords = loadPlayerFile("Files/player.json");
+            body.x = (int)coords.x;
+            body.y = (int)coords.y;
+            pos.x = coords.x;
+            pos.y = coords.y;
+        }
 
     private:
         Vector2 pos;
@@ -383,40 +485,39 @@ class Player {
         bool facingLeft;
         float speed;
         float jumpVelocity;
+        int health;
 };
 
 
-// Enemy class
+// Enemy IBClass
 class Enemy {
     public:
-        Enemy(int x, int y, int width, int height, int health, Uint8 r, Uint8 g, Uint8 b):
+        Enemy(int x, int y, int width, int height, int health, bool isFlying):
             pos{(float)x, (float)y},
             vel{0, 0},
             body{x, y, width, height},
             damageCooldown(0.0f),
             knockbackTimer(0.0f),
-            colour{r, g, b, 255},
             health(health),
-            onScreen(false)
+            onScreen(false),
+            isFlying(isFlying)
         {};
 
-        void Update(vector<SDL_Rect> platforms, float deltaTime, Vector2 playerPos) {
+        virtual ~Enemy() = default;
+
+        void Update(vector<SDL_Rect> platforms, float deltaTime, Vector2 playerPos, SDL_Rect playerBody) {
             if (onScreen) {
                 // If not currently taking knockback
                 if (knockbackTimer <= 0.0f) {
-                    if (playerPos.x < pos.x - body.w + 1) {
-                        vel.x = -150.0f;
-                    } else if (playerPos.x > pos.x + body.w - 1) {
-                        vel.x = 150.0f;
-                    } else {
-                        vel.x = 0;
-                    }
+                    TrackPlayer(playerPos, playerBody);
 
                     // Apply gravity
-                    vel.y += Constants::GRAVITY * deltaTime;
+                    if (!isFlying) {
+                        vel.y += Constants::GRAVITY * deltaTime;
 
-                    if (vel.y > Constants::TERMINAL_VELOCITY) {
-                        vel.y = Constants::TERMINAL_VELOCITY;
+                        if (vel.y > Constants::TERMINAL_VELOCITY) {
+                            vel.y = Constants::TERMINAL_VELOCITY;
+                        }
                     }
                 } else {
                     knockbackTimer -= deltaTime;
@@ -477,7 +578,12 @@ class Enemy {
 
         void Render(SDL_Renderer* renderer, Camera camera) {
             if (onScreen) {
-                SDL_SetRenderDrawColor(renderer, colour.r, colour.g, colour.b, colour.a);
+                if (damageCooldown > 0.25f) {
+                    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+                } else {
+                    SDL_SetRenderDrawColor(renderer, 14, 201, 128, 255);
+                }
+
                 // Draw enemy relative to camera position
                 SDL_Rect drawEnemy = {(int)roundf(body.x - camera.x), (int)(body.y - camera.y), body.w, body.h};
                 SDL_RenderFillRect(renderer, &drawEnemy);
@@ -485,6 +591,7 @@ class Enemy {
         }
 
         void DealDamage(Player& player);
+        virtual void TrackPlayer(Vector2 playerPos, SDL_Rect playerBody) = 0;
 
         bool TakeDamage(int damage, Vector2 damageLocation) {
             if (damageCooldown <= 0.0f) {
@@ -494,7 +601,10 @@ class Enemy {
                 // Apply knockback
                 calcKnockback(pos, vel, damageLocation);
 
-                // TODO: Take damage and die
+                health -= damage;
+                if (health <= 0) {
+                    cout << "enemy die" << endl;
+                }
 
                 return true;
             } else {
@@ -514,7 +624,7 @@ class Enemy {
         bool getOnScreen() { return onScreen; }
         SDL_Rect getBody() { return body; }
 
-    private:
+    protected:
         Vector2 pos;
         Vector2 vel;
         SDL_Rect body;
@@ -522,27 +632,59 @@ class Enemy {
         float damageCooldown;
         float knockbackTimer;
 
-        Colour colour;
         int health;
         bool onScreen;
+        bool isFlying;
+};
+
+// Melee enemy class
+class MeleeEnemy : public Enemy {
+    public:
+        MeleeEnemy(int x, int y, int width, int height, int health):
+            Enemy(x, y, width, height, health, false)
+        {};
+
+        void TrackPlayer(Vector2 playerPos, SDL_Rect playerBody) override {
+            if (playerPos.x + playerBody.w < pos.x + 1) { vel.x = -150.0f; }
+            else if (playerPos.x > pos.x + body.w - 1) { vel.x = 150.0f; }
+            else { vel.x = 0; }
+        }
+};
+
+// Flying enemy class
+class FlyingEnemy : public Enemy {
+    public:
+        FlyingEnemy(int x, int y, int width, int height, int health):
+            Enemy(x, y, width, height, health, true)
+        {};
+
+        void TrackPlayer(Vector2 playerPos, SDL_Rect playerBody) override {
+            if (playerPos.x + playerBody.w < pos.x + 1) { vel.x = -100.0f; }
+            else if (playerPos.x > pos.x + body.w - 1) { vel.x = 100.0f; }
+            else { vel.x = 0; }
+
+            if (playerPos.y + playerBody.h < pos.y + 1) { vel.y = -100.0f; }
+            else if (playerPos.y > pos.y + body.h - 1) { vel.y = 100.0f; }
+            else { vel.y = 0; }
+        }
 };
 
 
 // Class iteration logic (has to be defined after to avoid forward-declare errors)
-void Player::DealDamage(vector<Enemy>& enemies) {
+void Player::DealDamage(vector<unique_ptr<Enemy>>& enemies) {
     // Only check if player is attacking
     if (!isAttacking) { return; }
 
     for (auto& enemy : enemies) {
         // Only check enemies that are visible
-        if (!enemy.getOnScreen()) { return; }
+        if (!enemy->getOnScreen()) { continue; }
 
-        if (AABB(enemy.getBody(), attackHitbox)) {
-            bool tookDamage = enemy.TakeDamage(0, pos);
+        if (AABB(enemy->getBody(), attackHitbox)) {
+            bool tookDamage = enemy->TakeDamage(2, pos);
             if (tookDamage && !isJumping) {
                 switch (attackDirection) {
                     case AttackDirection::DOWN:
-                        // Player bounce on enemy when hit
+                        // Player bounce on enemy on hit
                         vel.y = jumpVelocity * 1.5;
                         attackCooldown = 0.0f;
                     default:
@@ -556,7 +698,7 @@ void Player::DealDamage(vector<Enemy>& enemies) {
 void Enemy::DealDamage(Player& player) {
     if (onScreen) {
         if (AABB(player.getBody(), body)) {
-            player.TakeDamage(0, pos);
+            player.TakeDamage(1, pos);
         }
     }
 }
@@ -574,23 +716,13 @@ class Game {
             deltaTime(0),
             camera({0.0f, 0.0f, 0.0f, 0.0f, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
             cameraRect({0, 0, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
-            player(100, 250, 55, 100),
-            enemies{
-                {1150, 125, 55, 100, 50, 205, 50, 50}
-            },
-            platforms{
-                {0, Constants::FLOOR_LEVEL, Constants::LEVEL_WIDTH, 130},   // Floor
-                {0, Constants::FLOOR_LEVEL - 150, 300, 150},
-                {550, Constants::FLOOR_LEVEL - 350, 125, 50},
-                {1050, Constants::FLOOR_LEVEL - 275, 300, 275},
-                {1350, Constants::FLOOR_LEVEL - 140, 150, 140},
-                {1625, Constants::FLOOR_LEVEL - 475, 125, 50},
-                {1225, Constants::FLOOR_LEVEL - 625, 125, 50},
-                {750, Constants::FLOOR_LEVEL - 775, 125, 50},
-                {0, Constants::FLOOR_LEVEL - 1005, 700, 50},
-                {925, Constants::FLOOR_LEVEL - 1005, Constants::LEVEL_WIDTH - 925, 50}
-            }
-        {};
+            player(55, 100, 10),
+            platforms(loadPlatforms("Files/platforms.json")),
+            platformTimer(0.0f)
+        {
+            enemies.push_back(make_unique<MeleeEnemy>(1150, 125, 55, 100, 12));
+            enemies.push_back(make_unique<FlyingEnemy>(2150, 125, 65, 65, 10));
+        };
 
         void Initialise() {
             // Initialise SDL, output error if fails
@@ -627,6 +759,9 @@ class Game {
                 }
             }
 
+            // Load player's position from save file
+            player.setLocation();
+
             // If everything has been initialised without error, run game 
             isRunning = true;
         }
@@ -642,6 +777,22 @@ class Game {
             // Get keyboard inputs
             const Uint8* keystate = SDL_GetKeyboardState(nullptr);
             player.HandleInput(keystate, controller);
+
+            // DEBUG code for adding new platforms
+            if (keystate[SDL_SCANCODE_R] && platformTimer <= 0.0f) {
+                platformTimer = 0.5f;
+                int x = player.getPos().x;
+                int y = player.getPos().y + 100;
+                int w = 125;
+                int h = 50;
+                
+                platforms.push_back(SDL_Rect{x, y, w, h});
+                cout << "    {\n" << "        \"x\": " << x << ",\n        \"y\": " << Constants::FLOOR_LEVEL - y
+                << ",\n        \"w\": " << w << ",\n        \"h\": " << h << "\n    }," << endl; 
+            }
+            if (platformTimer > 0.0f) {
+                platformTimer -= deltaTime;
+            }
         }
 
         void Update() {
@@ -654,11 +805,11 @@ class Game {
             if (deltaTime > 0.05f) {
                 deltaTime = 0.05f;
             }
-            
+
             for (auto& enemy : enemies) {
-                enemy.CheckOnScreen(cameraRect);
-                enemy.Update(platforms, deltaTime, player.getPos());
-                enemy.DealDamage(player);
+                enemy->CheckOnScreen(cameraRect);
+                enemy->Update(platforms, deltaTime, player.getPos(), player.getBody());
+                enemy->DealDamage(player);
             }
 
             player.Update(platforms, camera, deltaTime);
@@ -696,7 +847,7 @@ class Game {
             }
             
             for (auto& enemy : enemies) {
-                enemy.Render(renderer, camera);
+                enemy->Render(renderer, camera);
             }
 
             player.Render(renderer, camera);
@@ -713,6 +864,9 @@ class Game {
         }
 
         void CleanUp() {
+            // Save player location to json file
+            savePlayerFile("Files/player.json", player.getPos());
+
             SDL_DestroyRenderer(renderer);
             SDL_DestroyWindow(window);
             SDL_Quit();
@@ -730,8 +884,10 @@ class Game {
         SDL_Rect cameraRect;
         Player player;
 
-        vector<Enemy> enemies;
+        vector<unique_ptr<Enemy>> enemies;
         vector<SDL_Rect> platforms;
+
+        float platformTimer;
 };
 
 
