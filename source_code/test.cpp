@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include <SDL.h>
+#include <SDL_mixer.h>
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 using namespace std;
@@ -8,19 +9,22 @@ using namespace std;
 // Forward declarations
 class Player;
 class Enemy;
+class MeleeEnemy;
+class FlyingEnemy;
 class Game;
 
 // Define constants needed throughout code
 struct Constants {
     static constexpr int WIN_WIDTH = 1400;
     static constexpr int WIN_HEIGHT = 800;
-    static constexpr int LEVEL_WIDTH = 3250;
+    static constexpr int LEVEL_WIDTH = 4250;
     static constexpr int FLOOR_LEVEL = 700;
     static constexpr float GRAVITY = 1800.0f;
     static constexpr float TERMINAL_VELOCITY = 1200.0f;
     static constexpr float CAMERA_DELAY = 15.0f;
     static constexpr float HORIZONTAL_KNOCKBACK = 600.0f;
     static constexpr float VERTICAL_KNOCKBACK = -200.0f;
+    static constexpr float FADE_SPEED = 300.0f;
 };
 
 struct Vector2 {
@@ -31,6 +35,20 @@ struct Camera {
     float targetX, targetY;
     float x, y;
     int w, h;
+};
+
+struct PlayerData {
+    int x, y, health;
+};
+
+struct Coin {
+    SDL_Rect body;
+    bool collected;
+};
+
+struct SoundEffect {
+    string name;
+    Mix_Chunk* sound;
 };
 
 // Axis-aligned bounding box collision
@@ -54,10 +72,22 @@ void calcKnockback(Vector2 pos, Vector2& vel, Vector2 damageLocation) {
         vel.x = direction.x * Constants::HORIZONTAL_KNOCKBACK;
         vel.y = direction.y * Constants::HORIZONTAL_KNOCKBACK;
 
+        // Add a set vertical knockback if both objects are on similar y-levels
         if (fabs(vel.y) < 10) {
             vel.y = Constants::VERTICAL_KNOCKBACK;
         }
     }
+}
+
+// Load sound effects from ogg file
+vector<SoundEffect> loadSoundEffects() {
+    vector<SoundEffect> sfxList;
+
+    sfxList.push_back({"coin", Mix_LoadWAV("Files/coin.wav")});
+    sfxList.push_back({"damage", Mix_LoadWAV("Files/damage.wav")});
+    sfxList.push_back({"death", Mix_LoadWAV("Files/death.wav")});
+
+    return sfxList;
 }
 
 // Load platforms from json file
@@ -80,10 +110,10 @@ vector<SDL_Rect> loadPlatforms(const string& fileName) {
         int h = entry["h"].get<int>();
 
         int w = 0;
-        // If width is a string, then is will be "LEVEL_WIDTH"
+        // If width is a string, then it will be "LEVEL_WIDTH"
         if (entry["w"].is_string()) {
             w = Constants::LEVEL_WIDTH;
-        // If width is not a string, then is will be an int
+        // If width is not a string, then it will be an int
         } else {
             w = entry["w"].get<int>();
         }
@@ -94,27 +124,56 @@ vector<SDL_Rect> loadPlatforms(const string& fileName) {
     return platforms;
 }
 
-// Load player location from json file
-Vector2 loadPlayerFile(const string& fileName) {
+// Load coins from json file
+vector<Coin> loadCoins(const string& fileName) {
     ifstream file(fileName);
     if (!file.is_open()) {
-        cerr << "File '" << fileName << "' could not be opened." << endl;
-        return Vector2{100.0f, 250.0f};
+        cerr << "File '" << fileName << "' could not be opened. Closing program..." << endl;
+        exit(EXIT_FAILURE);
     }
 
     json data;
     file >> data;
 
-    float x = data[0]["x"].get<float>();
-    float y = data[0]["y"].get<float>();
+    vector<Coin> coins;
+    coins.reserve(data.size());
 
-    return Vector2{x, y};
+    for (auto& entry : data) {
+        int x = entry["x"].get<int>();
+        int y = Constants::FLOOR_LEVEL - entry["y"].get<int>();
+
+        coins.push_back(Coin{SDL_Rect{x, y, 50, 50}, false});
+    }
+
+    return coins;
 }
 
-// Save player location to json file
-void savePlayerFile(const string& fileName, Vector2 pos) {
+// Load enemies from json file
+vector<unique_ptr<Enemy>> loadEnemies(const string& fileName, Game* game);
+
+// Load player data from json file
+PlayerData loadPlayerFile(const string& fileName) {
+    ifstream file(fileName);
+    if (!file.is_open()) {
+        cerr << "File '" << fileName << "' could not be opened." << endl;
+        // Restore default player data
+        return PlayerData{100, 250, 10};
+    }
+
+    json data;
+    file >> data;
+
+    int x = data[0]["x"].get<int>();
+    int y = data[0]["y"].get<int>();
+    int health = data[0]["health"].get<int>();
+
+    return PlayerData{x, y, health};
+}
+
+// Save player data to json file
+void savePlayerFile(const string& fileName, Vector2 pos, int health) {
     json data = json::array();
-    data.push_back({{"x", (int)pos.x}, {"y", (int)pos.y}});
+    data.push_back({{"x", (int)pos.x}, {"y", (int)pos.y}, {"health", health}});
 
     ofstream file(fileName);
     if (!file.is_open()) {
@@ -132,11 +191,12 @@ enum class AttackDirection{UP, DOWN, LEFT, RIGHT};
 // Player class
 class Player {
     public:
-        Player(int width, int height, int health):
+        Player(int width, int height, Game* game):
             pos{0.0f, 0.0f},
             vel{0, 0},
             body{0, 0, width, height},
             attackHitbox{0, 0, width, width},
+            game(game),
             canDash{true},
             isDashing{false},
             dashPressedLastFrame{false},
@@ -155,7 +215,7 @@ class Player {
             facingLeft(false),
             speed(300.0f),
             jumpVelocity(-960.0f),
-            health(health)
+            health(10)
         {};
 
         void HandleInput(const Uint8* keystate, SDL_GameController* controller) {
@@ -236,10 +296,13 @@ class Player {
                 }
             }
 
-            // DEBUG input to fly
-            if (keystate[SDL_SCANCODE_Q]) {
+            // DEBUG inputs
+            /*if (keystate[SDL_SCANCODE_Q]) {
                 vel.y = jumpVelocity;
             }
+            if (keystate[SDL_SCANCODE_T]) {
+                cout << "player.x = " << body.x << ", player.y = " << body.y << endl;
+            }*/
 
             // Check if button pressed last frame so player cant hold down button button to keep doing action
             dashPressedLastFrame = dashPressed;
@@ -287,7 +350,7 @@ class Player {
             // Apply horizontal velocity
             pos.x += vel.x * deltaTime;
 
-            // Stop playing from going off screen
+            // Stop player from going off screen
             if (pos.x < 0) {
                 pos.x = 0;
                 vel.x = 0;
@@ -403,6 +466,7 @@ class Player {
                 SDL_RenderFillRect(renderer, &drawAttack);
             }
 
+            // Change colour temporarily to show damage
             if (damageCooldown > 0.25f) {
                 SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
             } else {
@@ -427,34 +491,38 @@ class Player {
             }
         }
 
-        void DealDamage(vector<unique_ptr<Enemy>>& enemies);
+        void RespawnPlayer(Camera& camera, int x, int y, int hp) {
+            // Reset attributes on death
+            body.x = x; body.y = y;
+            pos.x = (float)x; pos.y = (float)y;
+            vel.x = 0; vel.y = 0;
 
-        void TakeDamage(int damage, Vector2 damageLocation) {
-            if (damageCooldown <= 0.0f) {
-                knockbackTimer = 0.1f;
-                damageCooldown = 0.75f;
-                dashTimer = 0.0f;
-                
-                // Apply knockback
-                calcKnockback(pos, vel, damageLocation);
-                
-                // Apply damage
-                health -= damage;
-                if (health <= 0) {
-                    cout << "player die" << endl;
-                }
-            }
+            camera.x = 0;
+            camera.y = pos.y + body.h / 2 - camera.h / 1.8;
+
+            damageCooldown = 0.0f;
+            health = hp;
         }
 
+        void DealDamage(vector<unique_ptr<Enemy>>& enemies, vector<Coin>& coins);
+        void TakeDamage(int damage, Vector2 damageLocation);
+        
         // Getters and Setters
         Vector2 getPos() { return pos; }
         SDL_Rect getBody() { return body; }
-        void setLocation() {
-            Vector2 coords = loadPlayerFile("Files/player.json");
-            body.x = (int)coords.x;
-            body.y = (int)coords.y;
-            pos.x = coords.x;
-            pos.y = coords.y;
+        int getHealth() { return health; }
+        void setPlayerData() {
+            PlayerData playerData = loadPlayerFile("Files/player.json");
+            body.x = playerData.x;
+            body.y = playerData.y;
+            pos.x = (float)playerData.x;
+            pos.y = (float)playerData.y;
+            health = playerData.health;
+
+            // If player quit game whilst respawning, take damage to retrigger death
+            if (health <= 0) {
+                TakeDamage(0, Vector2{0.0f, 0.0f});
+            }
         }
 
     private:
@@ -462,6 +530,7 @@ class Player {
         Vector2 vel;
         SDL_Rect body;
         SDL_Rect attackHitbox;
+        Game* game;
 
         bool canDash;
         bool isDashing;
@@ -492,15 +561,20 @@ class Player {
 // Enemy IBClass
 class Enemy {
     public:
-        Enemy(int x, int y, int width, int height, int health, bool isFlying):
+        Enemy(Game* game, int x, int y, int width, int height, int health, bool isFlying):
             pos{(float)x, (float)y},
             vel{0, 0},
             body{x, y, width, height},
+            respawnPos{(float)x, (float)y},
+            game(game),
             damageCooldown(0.0f),
             knockbackTimer(0.0f),
+            respawnTimer(0.0f),
             health(health),
+            maxHealth(health),
             onScreen(false),
-            isFlying(isFlying)
+            isFlying(isFlying),
+            isAlive(true)
         {};
 
         virtual ~Enemy() = default;
@@ -570,6 +644,11 @@ class Enemy {
                         vel.y = 0;
                     }
                 }
+            } else if (!isAlive) {
+                respawnTimer -= deltaTime;
+                if (respawnTimer <= 0.0f) {
+                    Respawn();
+                }
             }
 
             // Apply cooldowns
@@ -578,6 +657,7 @@ class Enemy {
 
         void Render(SDL_Renderer* renderer, Camera camera) {
             if (onScreen) {
+                // Change colour temporarily to show damage
                 if (damageCooldown > 0.25f) {
                     SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
                 } else {
@@ -591,32 +671,27 @@ class Enemy {
         }
 
         void DealDamage(Player& player);
+        bool TakeDamage(int damage, Vector2 damageLocation);
         virtual void TrackPlayer(Vector2 playerPos, SDL_Rect playerBody) = 0;
 
-        bool TakeDamage(int damage, Vector2 damageLocation) {
-            if (damageCooldown <= 0.0f) {
-                knockbackTimer = 0.1f;
-                damageCooldown = 0.75f;
+        void Respawn() {
+            // Reset attributes on respawn
+            isAlive = true;
+            health = maxHealth;
+            knockbackTimer = 0.0f;
 
-                // Apply knockback
-                calcKnockback(pos, vel, damageLocation);
-
-                health -= damage;
-                if (health <= 0) {
-                    cout << "enemy die" << endl;
-                }
-
-                return true;
-            } else {
-                return false;
-            }
+            pos.x = respawnPos.x; pos.y = respawnPos.y;
+            body.x = (int)respawnPos.x; body.y = (int)respawnPos.y;
         }
 
         void CheckOnScreen(SDL_Rect cameraRect) {
-            if (AABB(body, cameraRect)) {
-                onScreen = true;
-            } else {
-                onScreen = false;
+            if (isAlive) {
+                // If enemy is colliding with the camera, then they are on screen
+                if (AABB(body, cameraRect)) {
+                    onScreen = true;
+                } else {
+                    onScreen = false;
+                }
             }
         }
 
@@ -628,22 +703,28 @@ class Enemy {
         Vector2 pos;
         Vector2 vel;
         SDL_Rect body;
+        Vector2 respawnPos;
+        Game* game;
 
         float damageCooldown;
         float knockbackTimer;
+        float respawnTimer;
 
         int health;
+        int maxHealth;
         bool onScreen;
         bool isFlying;
+        bool isAlive;
 };
 
 // Melee enemy class
 class MeleeEnemy : public Enemy {
     public:
-        MeleeEnemy(int x, int y, int width, int height, int health):
-            Enemy(x, y, width, height, health, false)
+        MeleeEnemy(Game* game, int x, int y, int width, int height, int health):
+            Enemy(game, x, y, width, height, health, false)
         {};
 
+        // Only track player horizontally (cant fly)
         void TrackPlayer(Vector2 playerPos, SDL_Rect playerBody) override {
             if (playerPos.x + playerBody.w < pos.x + 1) { vel.x = -150.0f; }
             else if (playerPos.x > pos.x + body.w - 1) { vel.x = 150.0f; }
@@ -654,10 +735,11 @@ class MeleeEnemy : public Enemy {
 // Flying enemy class
 class FlyingEnemy : public Enemy {
     public:
-        FlyingEnemy(int x, int y, int width, int height, int health):
-            Enemy(x, y, width, height, health, true)
+        FlyingEnemy(Game* game, int x, int y, int width, int height, int health):
+            Enemy(game, x, y, width, height, health, true)
         {};
 
+        // Track player horizontally and vertically (can fly)
         void TrackPlayer(Vector2 playerPos, SDL_Rect playerBody) override {
             if (playerPos.x + playerBody.w < pos.x + 1) { vel.x = -100.0f; }
             else if (playerPos.x > pos.x + body.w - 1) { vel.x = 100.0f; }
@@ -670,40 +752,6 @@ class FlyingEnemy : public Enemy {
 };
 
 
-// Class iteration logic (has to be defined after to avoid forward-declare errors)
-void Player::DealDamage(vector<unique_ptr<Enemy>>& enemies) {
-    // Only check if player is attacking
-    if (!isAttacking) { return; }
-
-    for (auto& enemy : enemies) {
-        // Only check enemies that are visible
-        if (!enemy->getOnScreen()) { continue; }
-
-        if (AABB(enemy->getBody(), attackHitbox)) {
-            bool tookDamage = enemy->TakeDamage(2, pos);
-            if (tookDamage && !isJumping) {
-                switch (attackDirection) {
-                    case AttackDirection::DOWN:
-                        // Player bounce on enemy on hit
-                        vel.y = jumpVelocity * 1.5;
-                        attackCooldown = 0.0f;
-                    default:
-                        break;
-                }
-            }
-        }
-    }
-}
-
-void Enemy::DealDamage(Player& player) {
-    if (onScreen) {
-        if (AABB(player.getBody(), body)) {
-            player.TakeDamage(1, pos);
-        }
-    }
-}
-
-
 // Main game logic class
 class Game {
     public:
@@ -711,18 +759,22 @@ class Game {
             window(nullptr),
             renderer(nullptr),
             controller(nullptr),
+            backgroundMusic(nullptr),
             previousTick(0),
             isRunning(false),
             deltaTime(0),
             camera({0.0f, 0.0f, 0.0f, 0.0f, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
             cameraRect({0, 0, Constants::WIN_WIDTH, Constants::WIN_HEIGHT}),
-            player(55, 100, 10),
+            player(55, 100, this),
+            playerIsRespawning(false),
+            playerHasReset(false),
+            playerHasWon(false),
+            fadeAlpha(0.0f),
+            enemies(loadEnemies("Files/enemies.json", this)),
             platforms(loadPlatforms("Files/platforms.json")),
-            platformTimer(0.0f)
-        {
-            enemies.push_back(make_unique<MeleeEnemy>(1150, 125, 55, 100, 12));
-            enemies.push_back(make_unique<FlyingEnemy>(2150, 125, 65, 65, 10));
-        };
+            coins(loadCoins("Files/coins.json"))
+            //platformTimer(0.0f)
+        {};
 
         void Initialise() {
             // Initialise SDL, output error if fails
@@ -750,6 +802,13 @@ class Game {
                 return;
             }
 
+            // Initialise audio mixer, output error if fails
+            if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+                cerr << "Audio mixer could not initialise. Error: " << Mix_GetError() << endl;
+                return;
+            }
+            Mix_AllocateChannels(32);
+
             // Find controller
             for (int i = 0; i < SDL_NumJoysticks(); i++) {
                 if (SDL_IsGameController(i)) {
@@ -759,8 +818,13 @@ class Game {
                 }
             }
 
-            // Load player's position from save file
-            player.setLocation();
+            // Load player data from save file
+            player.setPlayerData();
+
+            // Load sounds
+            backgroundMusic = Mix_LoadMUS("Files/music.ogg");
+            sfxList = loadSoundEffects();
+            Mix_PlayMusic(backgroundMusic, -1);
 
             // If everything has been initialised without error, run game 
             isRunning = true;
@@ -779,7 +843,7 @@ class Game {
             player.HandleInput(keystate, controller);
 
             // DEBUG code for adding new platforms
-            if (keystate[SDL_SCANCODE_R] && platformTimer <= 0.0f) {
+            /*if (keystate[SDL_SCANCODE_R] && platformTimer <= 0.0f) {
                 platformTimer = 0.5f;
                 int x = player.getPos().x;
                 int y = player.getPos().y + 100;
@@ -792,7 +856,7 @@ class Game {
             }
             if (platformTimer > 0.0f) {
                 platformTimer -= deltaTime;
-            }
+            }*/
         }
 
         void Update() {
@@ -806,32 +870,70 @@ class Game {
                 deltaTime = 0.05f;
             }
 
-            for (auto& enemy : enemies) {
-                enemy->CheckOnScreen(cameraRect);
-                enemy->Update(platforms, deltaTime, player.getPos(), player.getBody());
-                enemy->DealDamage(player);
+            // Normal game logic
+            if (!playerIsRespawning) {
+                for (auto& enemy : enemies) {
+                    enemy->CheckOnScreen(cameraRect);
+                    enemy->Update(platforms, deltaTime, player.getPos(), player.getBody());
+                    enemy->DealDamage(player);
+                }
+
+                player.Update(platforms, camera, deltaTime);
+                player.DealDamage(enemies, coins);
+
+                cameraRect.x = (int)(camera.x);
+                cameraRect.y = (int)(camera.y);
+
+                // Clamp camera to avoid out of bounds
+                if (camera.targetX < 0) {
+                    camera.targetX = 0;
+                } else if (camera.targetX > Constants::LEVEL_WIDTH - camera.w) {
+                    camera.targetX = Constants::LEVEL_WIDTH - camera.w;
+                }
+
+                if (camera.targetY > 0.0f) {
+                    camera.targetY = 0.0f;
+                }
+
+                // Make camera move smoothly to avoid stuttering
+                camera.y += (camera.targetY - camera.y) * Constants::CAMERA_DELAY * deltaTime;
+                camera.x += (camera.targetX - camera.x) * Constants::CAMERA_DELAY * deltaTime;
+
+            // If player is respawning (fading out)
+            } else if (!playerHasReset) {
+                fadeAlpha += Constants::FADE_SPEED * deltaTime;
+
+                if (fadeAlpha >= 255.0f) {
+                    fadeAlpha = 255.0f;
+
+                    // Reset objects whilst screen is covered
+                    player.RespawnPlayer(camera, 100, 250, 10);
+                    playerHasReset = true;
+                    
+                    if (!playerHasWon) {
+                        // Respawn enemies and reset coins
+                        for (auto& enemy : enemies) {
+                            enemy->Respawn();
+                        }
+                        for (auto& coin : coins) {
+                            coin.collected = false;
+                        }
+                    } else {
+                        // Close game if player has won
+                        isRunning = false;
+                    }
+                }
+
+            // If player is respawning (fading back in)
+            } else {
+                fadeAlpha -= Constants::FADE_SPEED * deltaTime;
+
+                if (fadeAlpha <= 0.0f) {
+                    fadeAlpha = 0.0f;
+                    playerIsRespawning = false;
+                    Mix_FadeInMusic(backgroundMusic, -1, 250);
+                }
             }
-
-            player.Update(platforms, camera, deltaTime);
-            player.DealDamage(enemies);
-
-            cameraRect.x = (int)(camera.x);
-            cameraRect.y = (int)(camera.y);
-
-            // Clamp camera to avoid out of bounds
-            if (camera.targetX < 0) {
-                camera.targetX = 0;
-            } else if (camera.targetX > Constants::LEVEL_WIDTH - camera.w) {
-                camera.targetX = Constants::LEVEL_WIDTH - camera.w;
-            }
-
-            if (camera.targetY > 0.0f) {
-                camera.targetY = 0.0f;
-            }
-
-            // Make camera move smoothly to avoid stuttering
-            camera.y += (camera.targetY - camera.y) * Constants::CAMERA_DELAY * deltaTime;
-            camera.x += (camera.targetX - camera.x) * Constants::CAMERA_DELAY * deltaTime;
         }
 
         void Render() {
@@ -850,9 +952,56 @@ class Game {
                 enemy->Render(renderer, camera);
             }
 
+            SDL_SetRenderDrawColor(renderer, 251, 206, 43, 255);
+            for (auto& coin : coins) {
+                if (!coin.collected) {
+                    SDL_Rect drawCoin = {(int)(coin.body.x - camera.x), (int)(coin.body.y - camera.y), coin.body.w, coin.body.h};
+                    SDL_RenderFillRect(renderer, &drawCoin);
+                }
+            }
+
             player.Render(renderer, camera);
 
+            // Respawning fade in/out
+            if (fadeAlpha > 0.0f) {
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+                // Fade to black if player died
+                if (!playerHasWon) {
+                    SDL_SetRenderDrawColor(renderer, 0, 0, 0, fadeAlpha);
+                // Fade to white if player won
+                } else {
+                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, fadeAlpha);
+                }
+
+                SDL_Rect screen = {0, 0, Constants::WIN_WIDTH, Constants::WIN_HEIGHT};
+                SDL_RenderFillRect(renderer, &screen);
+            }
+
             SDL_RenderPresent(renderer);
+        }
+
+        void TriggerPlayerDeath() {
+            playerIsRespawning = true;
+            playerHasReset = false;
+            fadeAlpha = 0.0f;
+            Mix_FadeOutMusic(750);
+        }
+
+        void TriggerWin() {
+            playerHasWon = true;
+            cout << "\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n🎉 Congratulations, you won! 🎉\n=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\n";
+            // Reuse player death fade out for victory fade out (this also resets the player for next game)
+            TriggerPlayerDeath();
+        }
+
+        void PlaySfx(string name) {
+            for (auto& sfx : sfxList) {
+                if (sfx.name == name) {
+                    Mix_PlayChannel(-1, sfx.sound, 0);
+                    return;
+                }
+            }
         }
 
         void Run() {
@@ -864,8 +1013,8 @@ class Game {
         }
 
         void CleanUp() {
-            // Save player location to json file
-            savePlayerFile("Files/player.json", player.getPos());
+            // Save player data to json file
+            savePlayerFile("Files/player.json", player.getPos(), player.getHealth());
 
             SDL_DestroyRenderer(renderer);
             SDL_DestroyWindow(window);
@@ -876,6 +1025,9 @@ class Game {
         SDL_Window* window;
         SDL_Renderer* renderer;
         SDL_GameController* controller;
+
+        Mix_Music* backgroundMusic;
+        vector<SoundEffect> sfxList;
         
         Uint32 previousTick;
         bool isRunning;
@@ -884,11 +1036,150 @@ class Game {
         SDL_Rect cameraRect;
         Player player;
 
+        bool playerIsRespawning;
+        bool playerHasReset;
+        bool playerHasWon;
+        float fadeAlpha;
+
         vector<unique_ptr<Enemy>> enemies;
         vector<SDL_Rect> platforms;
+        vector<Coin> coins;
 
-        float platformTimer;
+        //float platformTimer;
 };
+
+
+// Some class functions need to be defined after to avoid forward-declare errors
+void Player::TakeDamage(int damage, Vector2 damageLocation) {
+    if (damageCooldown <= 0.0f) {
+        knockbackTimer = 0.1f;
+        damageCooldown = 0.75f;
+        dashTimer = 0.0f;
+        
+        // Apply knockback
+        calcKnockback(pos, vel, damageLocation);
+        
+        // Apply damage
+        health -= damage;
+        if (health <= 0) {
+            game->PlaySfx("death");
+            game->TriggerPlayerDeath();
+        } else {
+            game->PlaySfx("damage");
+        }
+    }
+}
+
+void Player::DealDamage(vector<unique_ptr<Enemy>>& enemies, vector<Coin>& coins) {
+    // Only check if player is attacking
+    if (!isAttacking) { return; }
+
+    for (auto& enemy : enemies) {
+        // Only check enemies that are visible
+        if (!enemy->getOnScreen()) { continue; }
+
+        if (AABB(enemy->getBody(), attackHitbox)) {
+            bool tookDamage = enemy->TakeDamage(2, pos);
+            if (tookDamage && !isJumping) {
+                switch (attackDirection) {
+                    case AttackDirection::DOWN:
+                        // Player bounce on enemy on hit
+                        vel.y = jumpVelocity * 1.5;
+                        attackCooldown = 0.0f;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    for (auto& coin : coins) {
+        // Only check coins that havent been collected
+        if (coin.collected) { continue; }
+
+        if (AABB(coin.body, attackHitbox)) {
+            coin.collected = true;
+            game->PlaySfx("coin");
+
+            // When coin collected, check if all coins collected (more efficient than checking every update)
+            bool allCollected = true;
+            for (auto& checkCoin : coins) {
+                if (!checkCoin.collected) {
+                    allCollected = false;
+                    break;
+                }
+            }   
+            if (allCollected) {
+                game->TriggerWin();
+            }
+        }
+    }
+}
+
+bool Enemy::TakeDamage(int damage, Vector2 damageLocation) {
+    if (damageCooldown <= 0.0f) {
+        knockbackTimer = 0.1f;
+        damageCooldown = 0.75f;
+
+        // Apply knockback
+        calcKnockback(pos, vel, damageLocation);
+
+        // Apply damage
+        health -= damage;
+        if (health <= 0) {
+            game->PlaySfx("death");
+            isAlive = false;
+            onScreen = false;
+            respawnTimer = 10.0f;
+        } else {
+            game->PlaySfx("damage");
+        }
+
+        return true;
+    } else {
+        return false;
+    }
+}
+
+void Enemy::DealDamage(Player& player) {
+    if (onScreen) {
+        if (AABB(player.getBody(), body)) {
+            player.TakeDamage(1, pos);
+        }
+    }
+}
+
+vector<unique_ptr<Enemy>> loadEnemies(const string& fileName, Game* game) {
+    ifstream file(fileName);
+    if (!file.is_open()) {
+        cerr << "File '" << fileName << "' could not be opened. Closing program..." << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    json data;
+    file >> data;
+
+    vector<unique_ptr<Enemy>> enemies;
+    enemies.reserve(data.size());
+
+    for (auto& entry : data) {
+        string type = entry["type"].get<string>();
+        int x = entry["x"].get<int>();
+        int y = Constants::FLOOR_LEVEL - entry["y"].get<int>();
+        int w = entry["w"].get<int>();
+        int h = entry["h"].get<int>();
+        int health = entry["health"].get<int>();
+
+        if (type == "Flying") {
+            enemies.push_back(make_unique<FlyingEnemy>(game, x, y, w, h, health));
+        } else {
+            // Default to Melee
+            enemies.push_back(make_unique<MeleeEnemy>(game,x, y, w, h, health));
+        }
+    }
+
+    return enemies;
+}
 
 
 // Run game
@@ -900,4 +1191,4 @@ int main(int argc, char* argv[]) {
 
     game.CleanUp();
     return 0;
-} 
+}
