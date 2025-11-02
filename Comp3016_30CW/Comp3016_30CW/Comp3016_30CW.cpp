@@ -60,7 +60,7 @@ bool AABB(const SDL_Rect& a, const SDL_Rect& b) {
         a.x + a.w > b.x &&      // AND right edge of 'A' is further right than left edge of 'B'
         a.y < b.y + b.h &&      // AND top edge of 'A' is above bottom edge of 'B'
         a.y + a.h > b.y         // AND bottom edge of 'A' is below top edge of 'B'
-        );                          // THEN 'A' and 'B' are colliding (return true)
+    );                          // THEN 'A' and 'B' are colliding (return true)
 }
 
 // Calculate knockback direction
@@ -115,8 +115,8 @@ vector<SDL_Rect> loadPlatforms(const string& fileName) {
         // If width is a string, then it will be "LEVEL_WIDTH"
         if (entry["w"].is_string()) {
             w = Constants::LEVEL_WIDTH;
-            // If width is not a string, then it will be an int
         }
+        // If width is not a string, then it will be an int
         else {
             w = entry["w"].get<int>();
         }
@@ -292,16 +292,26 @@ public:
             attackCooldown = 0.75f;
 
             if (keystate[SDL_SCANCODE_W] || leftStickYAxis < 0.0f) {
+                // Set attack direction
                 attackDirection = AttackDirection::UP;
+                // Set attack initial position
+                attackHitbox.x = pos.x;
+                attackHitbox.y = pos.y - attackHitbox.h;
             }
             else if ((keystate[SDL_SCANCODE_S] || leftStickYAxis > 0.0f) && !isGrounded) {
                 attackDirection = AttackDirection::DOWN;
+                attackHitbox.x = pos.x;
+                attackHitbox.y = pos.y + body.h;
             }
             else if (facingLeft) {
                 attackDirection = AttackDirection::LEFT;
+                attackHitbox.x = pos.x - attackHitbox.w;
+                attackHitbox.y = pos.y + attackHitbox.h / 2.0f;
             }
             else {
                 attackDirection = AttackDirection::RIGHT;
+                attackHitbox.x = pos.x + attackHitbox.w;
+                attackHitbox.y = pos.y + attackHitbox.h / 2.0f;
             }
         }
 
@@ -947,9 +957,8 @@ public:
             // Make camera move smoothly to avoid stuttering
             camera.y += (camera.targetY - camera.y) * Constants::CAMERA_DELAY * deltaTime;
             camera.x += (camera.targetX - camera.x) * Constants::CAMERA_DELAY * deltaTime;
-
-            // If player is respawning (fading out)
         }
+        // If player is respawning (fading out)
         else if (!playerHasReset) {
             fadeAlpha += Constants::FADE_SPEED * deltaTime;
 
@@ -974,9 +983,8 @@ public:
                     isRunning = false;
                 }
             }
-
-            // If player is respawning (fading back in)
         }
+        // If player is respawning (fading back in)
         else {
             fadeAlpha -= Constants::FADE_SPEED * deltaTime;
 
@@ -1021,8 +1029,8 @@ public:
             // Fade to black if player died
             if (!playerHasWon) {
                 SDL_SetRenderDrawColor(renderer, 0, 0, 0, fadeAlpha);
-                // Fade to white if player won
             }
+            // Fade to white if player won
             else {
                 SDL_SetRenderDrawColor(renderer, 255, 255, 255, fadeAlpha);
             }
@@ -1043,7 +1051,7 @@ public:
 
     void TriggerWin() {
         playerHasWon = true;
-        cout << "\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n Congratulations, you won! \n=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n\n";
+        cout << "\n-=-=-=-=-=-=-=-=-=-=-=-=-=-\n Congratulations, you won! \n-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\n";
         // Reuse player death fade out for victory fade out (this also resets the player for next game)
         TriggerPlayerDeath();
     }
