@@ -1,22 +1,31 @@
 ﻿  Comp3016_30CW.cpp
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(324,43): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(324,81): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(374,44): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(393,29): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(420,29): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(450,37): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(451,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(454,37): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(455,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(458,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(459,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(462,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(463,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(650,33): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(674,33): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(940,57): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(1023,59): warning C4244: 'argument': conversion from 'float' to 'Uint8', possible loss of data
-C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(1027,65): warning C4244: 'argument': conversion from 'float' to 'Uint8', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(298,37): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(299,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(303,37): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(304,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(308,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(309,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(313,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(314,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(334,43): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(334,81): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(384,44): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(403,29): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(430,29): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(460,37): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(461,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(464,37): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(465,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(468,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(469,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(472,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(473,40): warning C4244: '=': conversion from 'float' to 'int', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(659,33): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(683,33): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(949,57): warning C4244: '=': conversion from 'int' to 'float', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(1030,59): warning C4244: 'argument': conversion from 'float' to 'Uint8', possible loss of data
+C:\Users\jimto\source\repos\Comp3016_30CW\Comp3016_30CW\Comp3016_30CW.cpp(1034,65): warning C4244: 'argument': conversion from 'float' to 'Uint8', possible loss of data
+  LINK : C:\Users\jimto\source\repos\Comp3016_30CW\x64\Debug\Comp3016_30CW.exe not found or not built by the last incremental link; performing full link
   Comp3016_30CW.vcxproj -> C:\Users\jimto\source\repos\Comp3016_30CW\x64\Debug\Comp3016_30CW.exe
   0 File(s) copied
   0 File(s) copied

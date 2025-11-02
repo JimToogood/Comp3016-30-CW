@@ -534,10 +534,9 @@ public:
         // Reset attributes on death
         body.x = x; body.y = y;
         pos.x = (float)x; pos.y = (float)y;
+        previousPos = pos;
         vel.x = 0.0f; vel.y = 0.0f;
-
-        camera.x = 0.0f;
-        camera.y = pos.y + body.h / 2.0f - camera.h / 1.8f;
+        camera.x = 0.0f; camera.y = 0.0f;
 
         damageCooldown = 0.0f;
         health = hp;
@@ -599,7 +598,7 @@ private:
 };
 
 
-// Enemy IBClass
+// Enemy Abstract Base Class
 class Enemy {
 public:
     Enemy(Game* game, int x, int y, int width, int height, int health, bool isFlying) :
@@ -966,7 +965,7 @@ public:
                 fadeAlpha = 255.0f;
 
                 // Reset objects whilst screen is covered
-                player.RespawnPlayer(camera, 100, 250, 10);
+                player.RespawnPlayer(camera, 100, 450, 10);
                 playerHasReset = true;
 
                 if (!playerHasWon) {
@@ -1164,6 +1163,8 @@ void Player::DealDamage(vector<unique_ptr<Enemy>>& enemies, vector<Coin>& coins)
         if (AABB(coin.body, attackHitbox)) {
             coin.collected = true;
             game->PlaySfx("coin");
+            // Coins heal player
+            health = 10;
 
             // When coin collected, check if all coins collected (more efficient than checking every update)
             bool allCollected = true;
